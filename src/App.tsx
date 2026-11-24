@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Cloud,
   Cpu,
@@ -13,15 +13,13 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
+import AuthScreen from './components/AuthScreen';
 import CrudManager from './components/CrudManager';
 import DashboardMonitor from './components/DashboardMonitor';
 import IotSimulator from './components/IotSimulator';
 import ManagementReport from './components/ManagementReport';
 import { useAuth } from './context/AuthContext';
-import {
-  subscribeAuditLogs,
-  subscribeLocalAuditEvents,
-} from './security/auditService';
+import { subscribeAuditLogs } from './security/auditService';
 import {
   decryptData,
   encryptData,
@@ -29,7 +27,7 @@ import {
   isCryptoConfigured,
   sanitizeInput,
 } from './security/cryptoService';
-import { USER_ROLES, type AuditLogEntry, type UserRole } from './types/auth';
+import type { AuditLogEntry } from './types/auth';
 
 type ActiveTab = 'dashboard' | 'crud' | 'iot' | 'report' | 'audit';
 
@@ -51,10 +49,6 @@ export default function App() {
     loading,
     profileLoading,
     authError,
-    isConfigured,
-    configError,
-    login,
-    register,
     logout,
     clearAuthError,
   } = useAuth();
@@ -62,19 +56,6 @@ export default function App() {
   // Navegación del shell autenticado
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  // Estado formulario de Login / Registro
-  const [authPanel, setAuthPanel] = useState<'login' | 'register'>('login');
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginSubmitting, setLoginSubmitting] = useState(false);
-
-  const [regNombre, setRegNombre] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regRol, setRegRol] = useState<UserRole>('Encargado de cultivo');
-  const [regSubmitting, setRegSubmitting] = useState(false);
-  const [uiMessage, setUiMessage] = useState<string | null>(null);
 
   // Estado Auto-test Criptográfico
   const [cryptoInput, setCryptoInput] = useState('');
@@ -85,14 +66,9 @@ export default function App() {
   const [corruptDecryptTest, setCorruptDecryptTest] = useState('');
   const [cryptoError, setCryptoError] = useState<string | null>(null);
 
-  // Estado Audit Logs en tiempo real (Firestore + eventos locales de LOGIN_FALLIDO)
+  // Estado Audit Logs en tiempo real
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [auditError, setAuditError] = useState<string | null>(null);
-  const [localAuditLogs, setLocalAuditLogs] = useState<AuditLogEntry[]>([]);
-
-  useEffect(() => {
-    return subscribeLocalAuditEvents(setLocalAuditLogs);
-  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -171,41 +147,8 @@ export default function App() {
     };
   }, [cryptoInput]);
 
-  async function handleLoginSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    clearAuthError();
-    setUiMessage(null);
-    setLoginSubmitting(true);
-    try {
-      await login(loginEmail, loginPassword);
-      setLoginPassword('');
-      setUiMessage('Sesión iniciada correctamente.');
-    } catch {
-      // El error queda expuesto en authError desde AuthContext
-    } finally {
-      setLoginSubmitting(false);
-    }
-  }
-
-  async function handleRegisterSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    clearAuthError();
-    setUiMessage(null);
-    setRegSubmitting(true);
-    try {
-      await register(regNombre, regEmail, regPassword, regRol);
-      setRegPassword('');
-      setUiMessage('Usuario registrado y perfil RBAC almacenado en Firestore.');
-    } catch {
-      // El error queda expuesto en authError desde AuthContext
-    } finally {
-      setRegSubmitting(false);
-    }
-  }
-
   async function handleLogout() {
     clearAuthError();
-    setUiMessage(null);
     setMobileMenuOpen(false);
     await logout();
   }
@@ -217,13 +160,13 @@ export default function App() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
-        <section className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 text-center shadow-xs">
-          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-700 text-white">
+      <main className="flex min-h-screen items-center justify-center bg-[#00753A] p-6">
+        <section className="w-full max-w-md rounded-2xl bg-[#FAF6EE] p-6 text-center shadow-lg">
+          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[#00753A] text-[#F2F0EC]">
             <Leaf className="h-5 w-5" strokeWidth={1.75} />
           </div>
-          <h1 className="text-lg font-semibold text-slate-900">AquaPlants / AquaBrain</h1>
-          <p className="mt-1 text-sm text-slate-600">
+          <h1 className="text-lg font-semibold text-[#14261C]">AquaPlants / AquaBrain</h1>
+          <p className="mt-1 text-sm text-[#45564C]">
             Verificando estado de sesión y perfil RBAC...
           </p>
         </section>
@@ -232,278 +175,7 @@ export default function App() {
   }
 
   if (!user) {
-    return (
-      <main className="min-h-screen bg-slate-50 px-4 py-10 text-slate-900">
-        <div className="mx-auto max-w-4xl space-y-6">
-          <header className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-6 shadow-xs sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-white">
-                <Leaf className="h-5 w-5" strokeWidth={1.75} />
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-                  AquaPlants / AquaBrain
-                </h1>
-                <p className="text-sm text-slate-600">
-                  Plataforma Web de Monitoreo y Gestión de Cultivos Aeropónicos
-                </p>
-              </div>
-            </div>
-
-            <div className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 sm:self-center">
-              <Cloud className="h-3.5 w-3.5 text-emerald-600" strokeWidth={1.75} />
-              {isConfigured ? 'Firebase Cloud Conectado' : 'Entorno Pendiente'}
-            </div>
-          </header>
-
-          {!isConfigured && configError && (
-            <section
-              aria-live="polite"
-              className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900"
-            >
-              <h2 className="font-semibold">Configuración de Entorno Pendiente</h2>
-              <p role="alert" className="mt-1">
-                {configError}
-              </p>
-              <p className="mt-1 text-xs">
-                Crea un archivo <code className="font-mono">.env</code> basado en{' '}
-                <code className="font-mono">.env.example</code> para habilitar Firebase
-                Authentication y Cloud Firestore.
-              </p>
-            </section>
-          )}
-
-          {(authError || uiMessage) && (
-            <section aria-live="polite">
-              {authError && (
-                <p
-                  role="alert"
-                  className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
-                >
-                  Error: {authError}
-                </p>
-              )}
-              {uiMessage && (
-                <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                  {uiMessage}
-                </p>
-              )}
-            </section>
-          )}
-
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            <section
-              id="login"
-              className={`rounded-xl border bg-white p-6 shadow-xs ${
-                authPanel === 'login' ? 'border-emerald-600' : 'border-slate-200'
-              }`}
-            >
-              <form onSubmit={handleLoginSubmit} className="space-y-4">
-                <fieldset className="space-y-4">
-                  <legend className="text-base font-semibold text-slate-900">
-                    Iniciar Sesión
-                  </legend>
-                  <div>
-                    <label
-                      htmlFor="login-email"
-                      className="mb-1 block text-xs font-medium text-slate-700"
-                    >
-                      Correo electrónico
-                    </label>
-                    <input
-                      id="login-email"
-                      name="email"
-                      type="email"
-                      value={loginEmail}
-                      onFocus={() => setAuthPanel('login')}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      required
-                      autoComplete="email"
-                      placeholder="operador@aquaplants.cl"
-                      className={INPUT_CLASS}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="login-password"
-                      className="mb-1 block text-xs font-medium text-slate-700"
-                    >
-                      Contraseña (mínimo 8 caracteres)
-                    </label>
-                    <input
-                      id="login-password"
-                      name="password"
-                      type="password"
-                      value={loginPassword}
-                      onFocus={() => setAuthPanel('login')}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      minLength={8}
-                      required
-                      autoComplete="current-password"
-                      className={INPUT_CLASS}
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loginSubmitting || !isConfigured}
-                    className="w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
-                  >
-                    {loginSubmitting ? 'Validando...' : 'Ingresar a la Plataforma'}
-                  </button>
-                </fieldset>
-              </form>
-            </section>
-
-            <section
-              id="registro"
-              className={`rounded-xl border bg-white p-6 shadow-xs ${
-                authPanel === 'register' ? 'border-emerald-600' : 'border-slate-200'
-              }`}
-            >
-              <form onSubmit={handleRegisterSubmit} className="space-y-4">
-                <fieldset className="space-y-4">
-                  <legend className="text-base font-semibold text-slate-900">
-                    Registro de Nuevo Usuario
-                  </legend>
-                  <div>
-                    <label
-                      htmlFor="reg-nombre"
-                      className="mb-1 block text-xs font-medium text-slate-700"
-                    >
-                      Nombre completo
-                    </label>
-                    <input
-                      id="reg-nombre"
-                      name="nombre"
-                      type="text"
-                      value={regNombre}
-                      onFocus={() => setAuthPanel('register')}
-                      onChange={(e) => setRegNombre(e.target.value)}
-                      required
-                      autoComplete="name"
-                      placeholder="Nombre Apellido"
-                      className={INPUT_CLASS}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="reg-email"
-                      className="mb-1 block text-xs font-medium text-slate-700"
-                    >
-                      Correo electrónico
-                    </label>
-                    <input
-                      id="reg-email"
-                      name="email"
-                      type="email"
-                      value={regEmail}
-                      onFocus={() => setAuthPanel('register')}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      required
-                      autoComplete="email"
-                      placeholder="usuario@aquaplants.cl"
-                      className={INPUT_CLASS}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="reg-password"
-                      className="mb-1 block text-xs font-medium text-slate-700"
-                    >
-                      Contraseña (mínimo 8 caracteres)
-                    </label>
-                    <input
-                      id="reg-password"
-                      name="password"
-                      type="password"
-                      value={regPassword}
-                      onFocus={() => setAuthPanel('register')}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      minLength={8}
-                      required
-                      autoComplete="new-password"
-                      className={INPUT_CLASS}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="reg-rol"
-                      className="mb-1 block text-xs font-medium text-slate-700"
-                    >
-                      Rol RBAC (para evaluación)
-                    </label>
-                    <select
-                      id="reg-rol"
-                      name="rol"
-                      value={regRol}
-                      onChange={(e) => setRegRol(e.target.value as UserRole)}
-                      className={INPUT_CLASS}
-                    >
-                      {USER_ROLES.map((roleOption) => (
-                        <option key={roleOption} value={roleOption}>
-                          {roleOption}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={regSubmitting || !isConfigured}
-                    className="w-full rounded-lg border border-emerald-700 bg-white px-4 py-2.5 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
-                  >
-                    {regSubmitting ? 'Registrando...' : 'Crear Cuenta'}
-                  </button>
-                </fieldset>
-              </form>
-            </section>
-          </div>
-
-          {localAuditLogs.length > 0 && (
-            <section
-              aria-label="Eventos de auditoría locales"
-              className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
-            >
-              <h2 className="text-sm font-semibold text-slate-900">
-                Registro Local de Intentos Fallidos (Sesión Actual)
-              </h2>
-              <p className="mt-1 text-xs text-slate-600">
-                Por regla estricta de producción en Firestore (
-                <code className="font-mono">request.auth != null</code>), los eventos sin sesión
-                autenticada se registran de forma controlada localmente.
-              </p>
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 font-medium text-slate-600">
-                      <th className="px-3 py-2">Timestamp (ISO 8601)</th>
-                      <th className="px-3 py-2">Acción</th>
-                      <th className="px-3 py-2">Email</th>
-                      <th className="px-3 py-2">Detalle</th>
-                      <th className="px-3 py-2">Hash Evento (SHA-256)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {localAuditLogs.map((entry) => (
-                      <tr key={entry.id ?? `${entry.timestamp}-${entry.hash_evento}`}>
-                        <td className="px-3 py-2 font-mono text-slate-600 tabular-nums">
-                          {entry.timestamp}
-                        </td>
-                        <td className="px-3 py-2 font-medium text-red-700">{entry.accion}</td>
-                        <td className="px-3 py-2 text-slate-700">{entry.email}</td>
-                        <td className="px-3 py-2 text-slate-600">{entry.detalle}</td>
-                        <td className="px-3 py-2 font-mono text-slate-500">
-                          {entry.hash_evento}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-        </div>
-      </main>
-    );
+    return <AuthScreen />;
   }
 
   return (
@@ -630,21 +302,14 @@ export default function App() {
         {/* ==================== CONTENIDO PRINCIPAL ==================== */}
         <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
           <div className="mx-auto max-w-7xl space-y-6">
-            {(authError || uiMessage) && (
+            {authError && (
               <section aria-live="polite" className="no-print">
-                {authError && (
-                  <p
-                    role="alert"
-                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
-                  >
-                    Error: {authError}
-                  </p>
-                )}
-                {uiMessage && (
-                  <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                    {uiMessage}
-                  </p>
-                )}
+                <p
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+                >
+                  Error: {authError}
+                </p>
               </section>
             )}
 
