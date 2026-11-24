@@ -7,19 +7,34 @@ import {
 } from 'react';
 import {
   ArrowRight,
+  Check,
+  ChevronDown,
+  ClipboardCheck,
   Clover,
+  Eye,
+  EyeOff,
   Flower2,
   Leaf,
   Loader2,
+  ShieldCheck,
   Sprout,
   TreePine,
   Trees,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { subscribeLocalAuditEvents } from '../security/auditService';
-import { USER_ROLES, type AuditLogEntry, type UserRole } from '../types/auth';
+import { USER_ROLES, type UserRole } from '../types/auth';
 
 type AuthView = 'login' | 'register';
+
+type FieldKey =
+  | 'loginEmail'
+  | 'loginPassword'
+  | 'regNombre'
+  | 'regEmail'
+  | 'regPassword'
+  | 'regConfirmPassword';
+
+type FieldErrors = Partial<Record<FieldKey, string>>;
 
 interface BotanicalItem {
   id: number;
@@ -29,6 +44,8 @@ interface BotanicalItem {
   baseRotate: number;
   iconIndex: number;
 }
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const BOTANICAL_ICONS = [
   Sprout,
@@ -53,7 +70,7 @@ const BOTANICAL_ITEMS: BotanicalItem[] = Array.from({ length: 20 }, (_, i) => {
   const xPct = col * cellW + 5 + randA * (cellW - 10);
   const yPct = row * cellH + 6 + randB * (cellH - 12);
   const size = Math.round(20 + ((i * 7) % 19)); // 20px - 38px
-  const baseRotate = Math.round(((randA - 0.5) * 56) + ((i % 2 === 0 ? 1 : -1) * 8));
+  const baseRotate = Math.round((randA - 0.5) * 56 + (i % 2 === 0 ? 1 : -1) * 8);
 
   return {
     id: i,
@@ -64,6 +81,64 @@ const BOTANICAL_ITEMS: BotanicalItem[] = Array.from({ length: 20 }, (_, i) => {
     iconIndex: i % BOTANICAL_ICONS.length,
   };
 });
+
+const ROLE_ICON_MAP: Record<UserRole, typeof Sprout> = {
+  'Encargado de cultivo': Sprout,
+  Supervisor: ClipboardCheck,
+  Administrador: ShieldCheck,
+};
+
+function getPasswordStrength(password: string): {
+  level: 0 | 1 | 2 | 3 | 4;
+  label: string;
+} {
+  if (password.length === 0) return { level: 0, label: '' };
+  if (password.length < 8) return { level: 1, label: 'Muy débil' };
+
+  const hasUpper = /[A-Z]/.test(password);
+  const hasNumber = /\d/.test(password);
+  const hasSpecial = /[^A-Za-z0-9]/.test(password);
+
+  if (hasUpper && hasNumber && hasSpecial) {
+    return { level: 4, label: 'Muy segura' };
+  }
+  if (hasUpper && hasNumber) {
+    return { level: 3, label: 'Segura' };
+  }
+  return { level: 2, label: 'Aceptable' };
+}
+
+function validateName(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Ingresa tu nombre completo';
+  if (trimmed.length < 3) return 'Mínimo 3 caracteres';
+  if (trimmed.length > 80) return 'Máximo 80 caracteres';
+  if (/[<>]/.test(trimmed)) return 'Caracteres no permitidos (< o >)';
+  return undefined;
+}
+
+function validateEmail(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Ingresa tu correo electrónico';
+  if (trimmed.length > 120) return 'Máximo 120 caracteres';
+  if (!EMAIL_REGEX.test(trimmed)) return 'Ingresa un correo válido';
+  return undefined;
+}
+
+function validatePassword(value: string): string | undefined {
+  if (!value) return 'Ingresa tu contraseña';
+  if (value.length < 8) return 'Mínimo 8 caracteres';
+  return undefined;
+}
+
+function validateConfirmPassword(
+  password: string,
+  confirmPassword: string
+): string | undefined {
+  if (!confirmPassword) return 'Confirma tu contraseña';
+  if (password !== confirmPassword) return 'Las contraseñas no coinciden';
+  return undefined;
+}
 
 export default function AuthScreen() {
   const {
@@ -80,17 +155,28 @@ export default function AuthScreen() {
   // Estado Login
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginSubmitting, setLoginSubmitting] = useState(false);
 
   // Estado Registro
   const [regNombre, setRegNombre] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
   const [regRol, setRegRol] = useState<UserRole>('Encargado de cultivo');
   const [regSubmitting, setRegSubmitting] = useState(false);
 
+  // Dropdown custom de rol
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const roleDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  // Errores por campo y disparo de animación shake
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [shakeTrigger, setShakeTrigger] = useState(0);
+
   const [uiMessage, setUiMessage] = useState<string | null>(null);
-  const [localAuditLogs, setLocalAuditLogs] = useState<AuditLogEntry[]>([]);
 
   // Referencias para física de repulsión a 60 FPS sin re-renders
   const rightPanelRef = useRef<HTMLElement | null>(null);
@@ -108,9 +194,51 @@ export default function AuthScreen() {
     }))
   );
 
+  // Cierre del dropdown custom al hacer clic fuera o presionar Escape
   useEffect(() => {
-    return subscribeLocalAuditEvents(setLocalAuditLogs);
-  }, []);
+    if (!roleDropdownOpen) return;
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (
+        roleDropdownRef.current &&
+        !roleDropdownRef.current.contains(event.target as Node)
+      ) {
+        setRoleDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setRoleDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [roleDropdownOpen]);
+
+  // Marcar campos en rojo con temblor ante error de Firebase Authentication
+  useEffect(() => {
+    if (!authError) return;
+    if (view === 'login') {
+      setFieldErrors((prev) => ({
+        ...prev,
+        loginEmail: prev.loginEmail ?? 'Verifica tus credenciales',
+        loginPassword: prev.loginPassword ?? 'Verifica tus credenciales',
+      }));
+      setShakeTrigger((c) => c + 1);
+    } else {
+      setFieldErrors((prev) => ({
+        ...prev,
+        regEmail: prev.regEmail ?? 'Revisa el correo ingresado',
+      }));
+      setShakeTrigger((c) => c + 1);
+    }
+  }, [authError, view]);
 
   useEffect(() => {
     const prefersReducedMotion =
@@ -201,10 +329,21 @@ export default function AuthScreen() {
     pointerRef.current.active = false;
   };
 
+  const clearFieldError = (key: FieldKey) => {
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
   const switchView = (nextView: AuthView) => {
     if (nextView === view) return;
     clearAuthError();
     setUiMessage(null);
+    setFieldErrors({});
+    setRoleDropdownOpen(false);
     setView(nextView);
   };
 
@@ -212,9 +351,23 @@ export default function AuthScreen() {
     e.preventDefault();
     clearAuthError();
     setUiMessage(null);
+
+    const emailErr = validateEmail(loginEmail);
+    const passwordErr = validatePassword(loginPassword);
+
+    if (emailErr || passwordErr) {
+      setFieldErrors({
+        ...(emailErr ? { loginEmail: emailErr } : {}),
+        ...(passwordErr ? { loginPassword: passwordErr } : {}),
+      });
+      setShakeTrigger((c) => c + 1);
+      return;
+    }
+
+    setFieldErrors({});
     setLoginSubmitting(true);
     try {
-      await login(loginEmail, loginPassword);
+      await login(loginEmail.trim(), loginPassword);
     } finally {
       setLoginSubmitting(false);
     }
@@ -224,17 +377,46 @@ export default function AuthScreen() {
     e.preventDefault();
     clearAuthError();
     setUiMessage(null);
+
+    const nombreErr = validateName(regNombre);
+    const emailErr = validateEmail(regEmail);
+    const passwordErr = validatePassword(regPassword);
+    const confirmErr = validateConfirmPassword(regPassword, regConfirmPassword);
+
+    if (nombreErr || emailErr || passwordErr || confirmErr) {
+      setFieldErrors({
+        ...(nombreErr ? { regNombre: nombreErr } : {}),
+        ...(emailErr ? { regEmail: emailErr } : {}),
+        ...(passwordErr ? { regPassword: passwordErr } : {}),
+        ...(confirmErr ? { regConfirmPassword: confirmErr } : {}),
+      });
+      setShakeTrigger((c) => c + 1);
+      return;
+    }
+
+    setFieldErrors({});
     setRegSubmitting(true);
     try {
-      await register(regNombre, regEmail, regPassword, regRol);
+      await register(regNombre.trim(), regEmail.trim(), regPassword, regRol);
       setUiMessage('Cuenta creada correctamente. Sesión iniciada.');
       setRegNombre('');
       setRegEmail('');
       setRegPassword('');
+      setRegConfirmPassword('');
     } finally {
       setRegSubmitting(false);
     }
   };
+
+  const getInputClassName = (hasError: boolean, extraPadding = '') =>
+    `w-full rounded-xl border bg-white px-4 py-3.5 text-sm text-slate-900 transition-all duration-200 focus:outline-none ${extraPadding} ${
+      hasError
+        ? 'border-red-500 ring-4 ring-red-500/15 placeholder:text-red-300'
+        : 'border-slate-200 placeholder:text-slate-400/80 focus:border-[#00753A] focus:ring-4 focus:ring-[#00753A]/10'
+    }`;
+
+  const passwordStrength = getPasswordStrength(regPassword);
+  const SelectedRoleIcon = ROLE_ICON_MAP[regRol];
 
   return (
     <main className="m-0 grid h-screen w-screen grid-cols-1 overflow-hidden rounded-none bg-white p-0 text-slate-900 lg:grid-cols-2">
@@ -274,7 +456,7 @@ export default function AuthScreen() {
         onMouseMove={handlePanelMouseMove}
         onMouseLeave={handlePanelMouseLeave}
         aria-label={view === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
-        className="order-2 relative flex h-full w-full flex-col items-center justify-center overflow-hidden bg-white px-8 py-8 lg:px-16"
+        className="order-2 relative flex h-full w-full flex-col items-center justify-center overflow-y-auto overflow-x-hidden bg-white px-8 py-8 lg:px-16"
       >
         {/* Capa de iconos botánicos con repulsión fluida */}
         <div
@@ -303,7 +485,11 @@ export default function AuthScreen() {
           })}
         </div>
 
-        <div className="relative z-10 w-full max-w-md rounded-2xl bg-white/80 p-6 sm:p-8">
+        <div
+          className={`relative z-10 w-full rounded-2xl bg-white/80 p-6 sm:p-8 ${
+            view === 'register' ? 'max-w-[450px]' : 'max-w-md'
+          }`}
+        >
           {!isConfigured && configError && (
             <section
               aria-live="polite"
@@ -348,7 +534,7 @@ export default function AuthScreen() {
                 </p>
               </header>
 
-              <form onSubmit={handleLoginSubmit} className="space-y-5">
+              <form noValidate onSubmit={handleLoginSubmit} className="space-y-5">
                 <div
                   className="auth-stagger-rise"
                   style={{ animationDelay: '45ms' }}
@@ -359,17 +545,40 @@ export default function AuthScreen() {
                   >
                     Correo electrónico
                   </label>
-                  <input
-                    id="login-email"
-                    name="email"
-                    type="email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                    placeholder="operador@aquaplants.cl"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
-                  />
+                  <div
+                    key={`login-email-${fieldErrors.loginEmail ? shakeTrigger : 0}`}
+                    className={fieldErrors.loginEmail ? 'animate-input-shake' : ''}
+                  >
+                    <input
+                      id="login-email"
+                      name="email"
+                      type="email"
+                      value={loginEmail}
+                      onChange={(e) => {
+                        setLoginEmail(e.target.value);
+                        clearFieldError('loginEmail');
+                      }}
+                      onBlur={() => {
+                        if (loginEmail.trim().length > 0) {
+                          const err = validateEmail(loginEmail);
+                          if (err) {
+                            setFieldErrors((prev) => ({
+                              ...prev,
+                              loginEmail: err,
+                            }));
+                          }
+                        }
+                      }}
+                      autoComplete="email"
+                      placeholder="operador@aquaplants.cl"
+                      className={getInputClassName(Boolean(fieldErrors.loginEmail))}
+                    />
+                  </div>
+                  {fieldErrors.loginEmail && (
+                    <p className="mt-1.5 text-xs text-red-600">
+                      {fieldErrors.loginEmail}
+                    </p>
+                  )}
                 </div>
 
                 <div
@@ -382,18 +591,62 @@ export default function AuthScreen() {
                   >
                     Contraseña
                   </label>
-                  <input
-                    id="login-password"
-                    name="password"
-                    type="password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    minLength={8}
-                    required
-                    autoComplete="current-password"
-                    placeholder="Mínimo 8 caracteres"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
-                  />
+                  <div
+                    key={`login-pass-${fieldErrors.loginPassword ? shakeTrigger : 0}`}
+                    className={`relative ${
+                      fieldErrors.loginPassword ? 'animate-input-shake' : ''
+                    }`}
+                  >
+                    <input
+                      id="login-password"
+                      name="password"
+                      type={showLoginPassword ? 'text' : 'password'}
+                      value={loginPassword}
+                      onChange={(e) => {
+                        setLoginPassword(e.target.value);
+                        clearFieldError('loginPassword');
+                      }}
+                      onBlur={() => {
+                        if (loginPassword.length > 0) {
+                          const err = validatePassword(loginPassword);
+                          if (err) {
+                            setFieldErrors((prev) => ({
+                              ...prev,
+                              loginPassword: err,
+                            }));
+                          }
+                        }
+                      }}
+                      autoComplete="current-password"
+                      placeholder="Mínimo 8 caracteres"
+                      className={getInputClassName(
+                        Boolean(fieldErrors.loginPassword),
+                        'pr-10'
+                      )}
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={
+                        showLoginPassword
+                          ? 'Ocultar contraseña'
+                          : 'Mostrar contraseña'
+                      }
+                      onClick={() => setShowLoginPassword((prev) => !prev)}
+                      className="absolute inset-y-0 right-3 flex items-center text-slate-400 transition-colors hover:text-slate-600"
+                    >
+                      {showLoginPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                  {fieldErrors.loginPassword && (
+                    <p className="mt-1.5 text-xs text-red-600">
+                      {fieldErrors.loginPassword}
+                    </p>
+                  )}
                 </div>
 
                 <div
@@ -449,7 +702,7 @@ export default function AuthScreen() {
                 </p>
               </header>
 
-              <form onSubmit={handleRegisterSubmit} className="space-y-5">
+              <form noValidate onSubmit={handleRegisterSubmit} className="space-y-5">
                 <div
                   className="auth-stagger-rise"
                   style={{ animationDelay: '45ms' }}
@@ -460,17 +713,40 @@ export default function AuthScreen() {
                   >
                     Nombre completo
                   </label>
-                  <input
-                    id="reg-nombre"
-                    name="nombre"
-                    type="text"
-                    value={regNombre}
-                    onChange={(e) => setRegNombre(e.target.value)}
-                    required
-                    autoComplete="name"
-                    placeholder="Nombre y apellido"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
-                  />
+                  <div
+                    key={`reg-nombre-${fieldErrors.regNombre ? shakeTrigger : 0}`}
+                    className={fieldErrors.regNombre ? 'animate-input-shake' : ''}
+                  >
+                    <input
+                      id="reg-nombre"
+                      name="nombre"
+                      type="text"
+                      value={regNombre}
+                      onChange={(e) => {
+                        setRegNombre(e.target.value);
+                        clearFieldError('regNombre');
+                      }}
+                      onBlur={() => {
+                        if (regNombre.trim().length > 0) {
+                          const err = validateName(regNombre);
+                          if (err) {
+                            setFieldErrors((prev) => ({
+                              ...prev,
+                              regNombre: err,
+                            }));
+                          }
+                        }
+                      }}
+                      autoComplete="name"
+                      placeholder="Nombre y apellido"
+                      className={getInputClassName(Boolean(fieldErrors.regNombre))}
+                    />
+                  </div>
+                  {fieldErrors.regNombre && (
+                    <p className="mt-1.5 text-xs text-red-600">
+                      {fieldErrors.regNombre}
+                    </p>
+                  )}
                 </div>
 
                 <div
@@ -483,76 +759,312 @@ export default function AuthScreen() {
                   >
                     Correo electrónico
                   </label>
-                  <input
-                    id="reg-email"
-                    name="email"
-                    type="email"
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                    placeholder="usuario@aquaplants.cl"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
-                  />
+                  <div
+                    key={`reg-email-${fieldErrors.regEmail ? shakeTrigger : 0}`}
+                    className={fieldErrors.regEmail ? 'animate-input-shake' : ''}
+                  >
+                    <input
+                      id="reg-email"
+                      name="email"
+                      type="email"
+                      value={regEmail}
+                      onChange={(e) => {
+                        setRegEmail(e.target.value);
+                        clearFieldError('regEmail');
+                      }}
+                      onBlur={() => {
+                        if (regEmail.trim().length > 0) {
+                          const err = validateEmail(regEmail);
+                          if (err) {
+                            setFieldErrors((prev) => ({
+                              ...prev,
+                              regEmail: err,
+                            }));
+                          }
+                        }
+                      }}
+                      autoComplete="email"
+                      placeholder="usuario@aquaplants.cl"
+                      className={getInputClassName(Boolean(fieldErrors.regEmail))}
+                    />
+                  </div>
+                  {fieldErrors.regEmail && (
+                    <p className="mt-1.5 text-xs text-red-600">
+                      {fieldErrors.regEmail}
+                    </p>
+                  )}
                 </div>
 
+                {/* Fila de 2 columnas: Contraseña + Confirmar contraseña + Medidor por líneas */}
                 <div
                   className="auth-stagger-rise"
                   style={{ animationDelay: '135ms' }}
                 >
-                  <label
-                    htmlFor="reg-password"
-                    className="mb-2 block text-xs font-semibold text-slate-700"
-                  >
-                    Contraseña
-                  </label>
-                  <input
-                    id="reg-password"
-                    name="password"
-                    type="password"
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    minLength={8}
-                    required
-                    autoComplete="new-password"
-                    placeholder="Mínimo 8 caracteres"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
-                  />
+                  <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                    <div>
+                      <label
+                        htmlFor="reg-password"
+                        className="mb-2 block text-xs font-semibold text-slate-700"
+                      >
+                        Contraseña
+                      </label>
+                      <div
+                        key={`reg-pass-${fieldErrors.regPassword ? shakeTrigger : 0}`}
+                        className={`relative ${
+                          fieldErrors.regPassword ? 'animate-input-shake' : ''
+                        }`}
+                      >
+                        <input
+                          id="reg-password"
+                          name="password"
+                          type={showRegPassword ? 'text' : 'password'}
+                          value={regPassword}
+                          onChange={(e) => {
+                            const nextPass = e.target.value;
+                            setRegPassword(nextPass);
+                            clearFieldError('regPassword');
+                            if (!regConfirmPassword || nextPass === regConfirmPassword) {
+                              clearFieldError('regConfirmPassword');
+                            } else if (fieldErrors.regConfirmPassword) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                regConfirmPassword: 'Las contraseñas no coinciden',
+                              }));
+                            }
+                          }}
+                          onBlur={() => {
+                            if (regPassword.length > 0) {
+                              const err = validatePassword(regPassword);
+                              if (err) {
+                                setFieldErrors((prev) => ({
+                                  ...prev,
+                                  regPassword: err,
+                                }));
+                              }
+                            }
+                          }}
+                          autoComplete="new-password"
+                          placeholder="Mín. 8 caracteres"
+                          className={getInputClassName(
+                            Boolean(fieldErrors.regPassword),
+                            'pl-3.5 pr-9'
+                          )}
+                        />
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          aria-label={
+                            showRegPassword
+                              ? 'Ocultar contraseña'
+                              : 'Mostrar contraseña'
+                          }
+                          onClick={() => setShowRegPassword((prev) => !prev)}
+                          className="absolute inset-y-0 right-3 flex items-center text-slate-400 transition-colors hover:text-slate-600"
+                        >
+                          {showRegPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                      {fieldErrors.regPassword && (
+                        <p className="mt-1.5 text-xs text-red-600">
+                          {fieldErrors.regPassword}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="reg-confirm-password"
+                        className="mb-2 block text-xs font-semibold text-slate-700"
+                      >
+                        Repetir contraseña
+                      </label>
+                      <div
+                        key={`reg-confirm-${fieldErrors.regConfirmPassword ? shakeTrigger : 0}`}
+                        className={`relative ${
+                          fieldErrors.regConfirmPassword
+                            ? 'animate-input-shake'
+                            : ''
+                        }`}
+                      >
+                        <input
+                          id="reg-confirm-password"
+                          name="confirmPassword"
+                          type={showRegConfirmPassword ? 'text' : 'password'}
+                          value={regConfirmPassword}
+                          onChange={(e) => {
+                            const nextConfirm = e.target.value;
+                            setRegConfirmPassword(nextConfirm);
+                            if (!nextConfirm || regPassword === nextConfirm) {
+                              clearFieldError('regConfirmPassword');
+                            } else {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                regConfirmPassword: 'Las contraseñas no coinciden',
+                              }));
+                            }
+                          }}
+                          onBlur={() => {
+                            if (regConfirmPassword.length > 0) {
+                              const err = validateConfirmPassword(
+                                regPassword,
+                                regConfirmPassword
+                              );
+                              if (err) {
+                                setFieldErrors((prev) => ({
+                                  ...prev,
+                                  regConfirmPassword: err,
+                                }));
+                              }
+                            }
+                          }}
+                          autoComplete="new-password"
+                          placeholder="Repite contraseña"
+                          className={getInputClassName(
+                            Boolean(fieldErrors.regConfirmPassword),
+                            'pl-3.5 pr-9'
+                          )}
+                        />
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          aria-label={
+                            showRegConfirmPassword
+                              ? 'Ocultar confirmación'
+                              : 'Mostrar confirmación'
+                          }
+                          onClick={() =>
+                            setShowRegConfirmPassword((prev) => !prev)
+                          }
+                          className="absolute inset-y-0 right-3 flex items-center text-slate-400 transition-colors hover:text-slate-600"
+                        >
+                          {showRegConfirmPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                      {fieldErrors.regConfirmPassword && (
+                        <p className="mt-1.5 text-xs text-red-600">
+                          {fieldErrors.regConfirmPassword}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Medidor de seguridad por 4 líneas */}
+                  <div className="mt-2.5 flex items-center gap-3">
+                    <div className="grid flex-1 grid-cols-4 gap-1.5">
+                      {[1, 2, 3, 4].map((step) => {
+                        let barColor = 'bg-slate-200';
+                        if (passwordStrength.level >= step) {
+                          if (passwordStrength.level === 1) barColor = 'bg-red-500';
+                          else if (passwordStrength.level === 2)
+                            barColor = 'bg-amber-400';
+                          else if (passwordStrength.level === 3)
+                            barColor = 'bg-emerald-500';
+                          else barColor = 'bg-[#00753A]';
+                        }
+                        return (
+                          <span
+                            key={step}
+                            className={`h-1.5 rounded-full transition-colors duration-300 ${barColor}`}
+                          />
+                        );
+                      })}
+                    </div>
+                    {passwordStrength.label && (
+                      <span className="shrink-0 text-[11px] font-medium text-slate-500">
+                        {passwordStrength.label}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
+                {/* Dropdown custom accesible para Perfil de usuario */}
                 <div
-                  className="auth-stagger-rise"
+                  ref={roleDropdownRef}
+                  className="auth-stagger-rise relative z-50"
                   style={{ animationDelay: '180ms' }}
                 >
                   <label
-                    htmlFor="reg-rol"
+                    id="reg-rol-label"
                     className="mb-2 block text-xs font-semibold text-slate-700"
                   >
                     Perfil de usuario
                   </label>
-                  <select
-                    id="reg-rol"
-                    name="rol"
-                    value={regRol}
-                    onChange={(e) => setRegRol(e.target.value as UserRole)}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
+                  <button
+                    type="button"
+                    role="combobox"
+                    aria-labelledby="reg-rol-label"
+                    aria-expanded={roleDropdownOpen}
+                    aria-haspopup="listbox"
+                    onClick={() => setRoleDropdownOpen((prev) => !prev)}
+                    className={`flex w-full items-center justify-between rounded-xl border bg-white px-4 py-3.5 text-left text-sm text-slate-900 transition-all duration-200 focus:outline-none ${
+                      roleDropdownOpen
+                        ? 'border-[#00753A] ring-4 ring-[#00753A]/12'
+                        : 'border-slate-200 hover:border-slate-300 focus:border-[#00753A] focus:ring-4 focus:ring-[#00753A]/12'
+                    }`}
                   >
-                    {USER_ROLES.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
+                    <span className="flex items-center gap-2.5">
+                      <SelectedRoleIcon className="h-4 w-4 text-[#00753A]" />
+                      <span>{regRol}</span>
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${
+                        roleDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {roleDropdownOpen && (
+                    <ul
+                      role="listbox"
+                      aria-labelledby="reg-rol-label"
+                      className="auth-stagger-rise absolute bottom-full left-0 right-0 z-50 mb-2 origin-bottom rounded-2xl border border-slate-100 bg-white p-1.5 shadow-[0_14px_34px_-8px_rgba(15,23,42,0.14)]"
+                    >
+                      {USER_ROLES.map((role) => {
+                        const RoleIcon = ROLE_ICON_MAP[role];
+                        const isSelected = role === regRol;
+                        return (
+                          <li key={role} role="option" aria-selected={isSelected}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRegRol(role);
+                                setRoleDropdownOpen(false);
+                              }}
+                              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                                isSelected
+                                  ? 'bg-[#00753A]/10 font-medium text-[#00753A]'
+                                  : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <RoleIcon className="h-4 w-4 shrink-0" />
+                              <span>{role}</span>
+                              {isSelected && (
+                                <Check className="ml-auto h-4 w-4 text-[#00753A]" />
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </div>
 
                 <div
-                  className="auth-stagger-rise"
+                  className="auth-stagger-rise relative z-10"
                   style={{ animationDelay: '215ms' }}
                 >
                   <button
                     type="submit"
                     disabled={regSubmitting || !isConfigured}
-                    className="group relative mt-7 flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg bg-gradient-to-r from-[#F7C224] via-[#EEAD0E] to-[#E29C06] py-3.5 text-sm font-semibold text-slate-950 shadow-[0_8px_20px_-4px_rgba(230,166,8,0.42),inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:brightness-[1.03] hover:shadow-[0_12px_24px_-4px_rgba(230,166,8,0.52),inset_0_1px_0_rgba(255,255,255,0.6)] active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="group relative mt-7 flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg bg-gradient-to-r from-[#F7C224] via-[#EEAD0E] to-[#E29C06] py-3.5 text-sm font-semibold leading-none text-slate-950 shadow-[0_8px_20px_-4px_rgba(230,166,8,0.42),inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:brightness-[1.03] hover:shadow-[0_12px_24px_-4px_rgba(230,166,8,0.52),inset_0_1px_0_rgba(255,255,255,0.6)] active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <span
                       aria-hidden="true"
@@ -569,7 +1081,7 @@ export default function AuthScreen() {
               </form>
 
               <p
-                className="auth-stagger-rise mt-7 text-center text-sm text-slate-600"
+                className="auth-stagger-rise relative z-10 mt-7 text-center text-sm text-slate-600"
                 style={{ animationDelay: '215ms' }}
               >
                 ¿Ya tienes una cuenta?{' '}
@@ -582,27 +1094,6 @@ export default function AuthScreen() {
                 </button>
               </p>
             </div>
-          )}
-
-          {localAuditLogs.length > 0 && (
-            <section
-              aria-label="Eventos de auditoría locales"
-              className="mt-6 rounded-lg border border-slate-200 bg-slate-50/95 px-3.5 py-2.5 text-xs text-slate-700"
-            >
-              <p className="font-semibold text-slate-900">
-                Intentos fallidos recientes ({localAuditLogs.length})
-              </p>
-              <ul className="mt-1 space-y-1">
-                {localAuditLogs.slice(0, 3).map((entry) => (
-                  <li
-                    key={entry.id ?? `${entry.timestamp}-${entry.hash_evento}`}
-                    className="truncate text-[11px] text-slate-500"
-                  >
-                    {entry.accion} · {entry.email}
-                  </li>
-                ))}
-              </ul>
-            </section>
           )}
         </div>
       </section>

@@ -334,7 +334,7 @@ export async function createCultivo(
 ): Promise<void> {
   const firestore = requireFirestore();
   const idCultivo = requireText(input.id_cultivo, 'ID Cultivo');
-  const idSistema = requireText(input.id_sistema, 'ID Sistema');
+  const idSistema = input.id_sistema.trim();
   const nombrePlanta = requireText(input.nombre_planta, 'Nombre de Planta');
   const fechaSiembra = requireText(input.fecha_siembra, 'Fecha de Siembra');
 
@@ -346,7 +346,9 @@ export async function createCultivo(
   }
 
   await assertUniqueCode('cultivos', 'id_cultivo', idCultivo);
-  await assertSystemExists(idSistema);
+  if (idSistema) {
+    await assertSystemExists(idSistema);
+  }
 
   try {
     await addDoc(collection(firestore, 'cultivos'), {
@@ -376,7 +378,7 @@ export async function updateCultivo(
 ): Promise<void> {
   const firestore = requireFirestore();
   const idCultivo = requireText(input.id_cultivo, 'ID Cultivo');
-  const idSistema = requireText(input.id_sistema, 'ID Sistema');
+  const idSistema = input.id_sistema.trim();
   const nombrePlanta = requireText(input.nombre_planta, 'Nombre de Planta');
   const fechaSiembra = requireText(input.fecha_siembra, 'Fecha de Siembra');
 
@@ -388,7 +390,9 @@ export async function updateCultivo(
   }
 
   await assertUniqueCode('cultivos', 'id_cultivo', idCultivo, docId);
-  await assertSystemExists(idSistema);
+  if (idSistema) {
+    await assertSystemExists(idSistema);
+  }
 
   try {
     await updateDoc(doc(firestore, 'cultivos', docId), {
@@ -494,7 +498,7 @@ export async function createSensor(
 ): Promise<void> {
   const firestore = requireFirestore();
   const idSensor = requireText(input.id_sensor, 'ID Sensor');
-  const idSistema = requireText(input.id_sistema, 'ID Sistema');
+  const idSistema = input.id_sistema.trim();
   const idDispositivo = requireText(input.id_dispositivo, 'ID Dispositivo');
   const unidad = requireText(input.unidad, 'Unidad');
 
@@ -507,7 +511,9 @@ export async function createSensor(
   validateSensorThresholds(input.umbral_min, input.umbral_max);
 
   await assertUniqueCode('sensores', 'id_sensor', idSensor);
-  await assertSystemExists(idSistema);
+  if (idSistema) {
+    await assertSystemExists(idSistema);
+  }
 
   try {
     await addDoc(collection(firestore, 'sensores'), {
@@ -540,7 +546,7 @@ export async function updateSensor(
 ): Promise<void> {
   const firestore = requireFirestore();
   const idSensor = requireText(input.id_sensor, 'ID Sensor');
-  const idSistema = requireText(input.id_sistema, 'ID Sistema');
+  const idSistema = input.id_sistema.trim();
   const idDispositivo = requireText(input.id_dispositivo, 'ID Dispositivo');
   const unidad = requireText(input.unidad, 'Unidad');
 
@@ -553,7 +559,9 @@ export async function updateSensor(
   validateSensorThresholds(input.umbral_min, input.umbral_max);
 
   await assertUniqueCode('sensores', 'id_sensor', idSensor, docId);
-  await assertSystemExists(idSistema);
+  if (idSistema) {
+    await assertSystemExists(idSistema);
+  }
 
   try {
     await updateDoc(doc(firestore, 'sensores', docId), {

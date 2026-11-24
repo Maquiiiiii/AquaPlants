@@ -154,7 +154,7 @@ service cloud.firestore {
           'estado'
         ])
         && isValidNonEmptyString(data.id_cultivo, 1, 100)
-        && isValidNonEmptyString(data.id_sistema, 1, 100)
+        && data.id_sistema is string && data.id_sistema.size() <= 100
         && isValidNonEmptyString(data.nombre_planta, 1, 150)
         && isValidNonEmptyString(data.fecha_siembra, 1, 64)
         && data.estado in ['Activo', 'En cosecha', 'Inactivo'];
@@ -182,7 +182,7 @@ service cloud.firestore {
           'estado'
         ])
         && isValidNonEmptyString(data.id_sensor, 1, 100)
-        && isValidNonEmptyString(data.id_sistema, 1, 100)
+        && data.id_sistema is string && data.id_sistema.size() <= 100
         && isValidNonEmptyString(data.id_dispositivo, 1, 100)
         && data.tipo_variable in ['caudal', 'nutrientes', 'consumo_hidrico', 'fotoperiodo']
         && isValidNonEmptyString(data.unidad, 1, 32)

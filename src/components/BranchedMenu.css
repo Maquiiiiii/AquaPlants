@@ -1,0 +1,284 @@
+.branched-menu {
+  --bm-accent: #22c55e;
+  --bm-line: #35634b;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  width: 100%;
+  user-select: none;
+}
+
+.branched-menu__divider {
+  margin: 0.75rem 0.5rem;
+  border: 0;
+  border-top: 1px solid rgba(242, 240, 236, 0.08);
+}
+
+.branched-menu__group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Cabecera de sección o ítem directo superior (sin cajas ni fondos) */
+.branched-menu__head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(242, 240, 236, 0.52);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 180ms ease;
+}
+
+.branched-menu__head:hover {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.branched-menu__head:focus-visible,
+.branched-menu__item:focus-visible {
+  outline: 2px solid #e6a608;
+  outline-offset: 2px;
+  border-radius: 0.375rem;
+}
+
+.branched-menu__head[data-open='true'] {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+}
+
+.branched-menu__head[data-active='true'] {
+  background: transparent !important;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.branched-menu__head-icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: rgba(242, 240, 236, 0.52);
+  transition: color 180ms ease;
+}
+
+.branched-menu__head:hover .branched-menu__head-icon,
+.branched-menu__head[data-open='true'] .branched-menu__head-icon {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.branched-menu__head[data-active='true'] .branched-menu__head-icon {
+  color: var(--bm-accent);
+}
+
+.branched-menu__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branched-menu__chevron {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  margin-left: auto;
+  color: #8db09e;
+  transition:
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 180ms ease;
+}
+
+.branched-menu__head[data-open='true'] .branched-menu__chevron {
+  transform: rotate(180deg);
+  color: #f2f0ec;
+}
+
+/* Badge numérico sólido dorado */
+.branched-menu__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 0.375rem;
+  border-radius: 0.375rem;
+  background-color: #e6a608;
+  color: #09150f;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(230, 166, 8, 0.24);
+}
+
+/* Plegado fluido con CSS Grid */
+.branched-menu__collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease;
+}
+
+.branched-menu__collapse[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.branched-menu__collapse-inner {
+  overflow: hidden;
+}
+
+/* Contenedor de sub-ítems + SVG de ramas botánicas */
+.branched-menu__sub {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-top: 0.375rem;
+  padding-bottom: 0.25rem;
+  padding-left: 3rem;
+}
+
+.branched-menu__lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3rem;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Tallo y ramas inactivas */
+.branched-menu__branch-idle {
+  fill: none;
+  stroke: rgba(167, 196, 181, 0.18);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Tallo activo animado desde arriba hasta la opción seleccionada */
+.branched-menu__stem-active {
+  fill: none;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  transition:
+    stroke-dashoffset var(--bm-draw-duration, 400ms) cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms ease;
+}
+
+.branched-menu__stem-active[data-active='true'] {
+  stroke-dashoffset: 0;
+  opacity: 1;
+}
+
+/* Hojas vectoriales a lo largo de cada rama */
+.branched-menu__leaf {
+  fill: var(--bm-line);
+  opacity: 0.35;
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(0.82) rotate(-12deg);
+  transition:
+    transform 260ms ease,
+    opacity 220ms ease,
+    fill 220ms ease;
+}
+
+.branched-menu__leaf-group[data-active='true'] .branched-menu__leaf--stem {
+  fill: var(--bm-accent);
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+  transition:
+    transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1) 150ms,
+    opacity 220ms ease 140ms,
+    fill 220ms ease 140ms;
+}
+
+.branched-menu__leaf-group[data-active='true'] .branched-menu__leaf--tip {
+  fill: var(--bm-accent);
+  opacity: 1;
+  transform: scale(1.05) rotate(0deg);
+  transition:
+    transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1) 210ms,
+    opacity 220ms ease 190ms,
+    fill 220ms ease 190ms;
+}
+
+/* Sub-ítems (sin cajas ni fondos) */
+.branched-menu__item {
+  display: flex;
+  width: 100%;
+  min-height: 2.35rem;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(242, 240, 236, 0.52);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 180ms ease;
+}
+
+.branched-menu__item:hover {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.branched-menu__item[data-active='true'] {
+  background: transparent !important;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.branched-menu__item-icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex-shrink: 0;
+  color: rgba(242, 240, 236, 0.52);
+  transition: color 180ms ease;
+}
+
+.branched-menu__item:hover .branched-menu__item-icon {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.branched-menu__item[data-active='true'] .branched-menu__item-icon {
+  color: var(--bm-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .branched-menu__head,
+  .branched-menu__chevron,
+  .branched-menu__collapse,
+  .branched-menu__stem-active,
+  .branched-menu__leaf,
+  .branched-menu__leaf-group[data-active='true'] .branched-menu__leaf--stem,
+  .branched-menu__leaf-group[data-active='true'] .branched-menu__leaf--tip,
+  .branched-menu__item {
+    transition: none !important;
+  }
+}

@@ -1,46 +1,59 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Cloud,
+  BarChart3,
   Cpu,
-  Database,
   FileText,
-  KeyRound,
-  LayoutDashboard,
-  Leaf,
+  Folder,
+  Layers,
+  LayoutGrid,
   LogOut,
   Menu,
   ShieldCheck,
-  UserCheck,
   X,
 } from 'lucide-react';
 import AuthScreen from './components/AuthScreen';
+import BranchedMenu, { type BranchedMenuItem } from './components/BranchedMenu';
 import CrudManager from './components/CrudManager';
 import DashboardMonitor from './components/DashboardMonitor';
 import IotSimulator from './components/IotSimulator';
+import LiquidSplashScreen from './components/LiquidSplashScreen';
 import ManagementReport from './components/ManagementReport';
+import SecurityAudit from './components/SecurityAudit';
 import { useAuth } from './context/AuthContext';
-import { subscribeAuditLogs } from './security/auditService';
-import {
-  decryptData,
-  encryptData,
-  generateSHA256Hash,
-  isCryptoConfigured,
-  sanitizeInput,
-} from './security/cryptoService';
-import type { AuditLogEntry } from './types/auth';
+import { subscribeAlertas } from './services/iotService';
 
 type ActiveTab = 'dashboard' | 'crud' | 'iot' | 'report' | 'audit';
+type MenuValue = ActiveTab | 'sec-operacion' | 'sec-analisis';
 
-const NAV_ITEMS: Array<{ id: ActiveTab; label: string; icon: typeof LayoutDashboard }> = [
-  { id: 'dashboard', label: 'Dashboard Operativo', icon: LayoutDashboard },
-  { id: 'crud', label: 'Gestión CRUD', icon: Database },
-  { id: 'iot', label: 'Simulador IoT & Pruebas', icon: Cpu },
-  { id: 'report', label: 'Informe de Gestión', icon: FileText },
-  { id: 'audit', label: 'Auditoría y Criptografía', icon: ShieldCheck },
-];
+interface TabMeta {
+  id: ActiveTab;
+  label: string;
+  group: string;
+  icon: typeof LayoutGrid;
+}
 
-const INPUT_CLASS =
-  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/20';
+const TAB_META: Record<ActiveTab, TabMeta> = {
+  dashboard: { id: 'dashboard', label: 'Dashboard', group: 'Vista General', icon: LayoutGrid },
+  crud: { id: 'crud', label: 'Gestión de Operaciones', group: 'Operación', icon: Layers },
+  iot: { id: 'iot', label: 'Simulador de Campo', group: 'Operación', icon: Cpu },
+  report: {
+    id: 'report',
+    label: 'Informe de Gestión',
+    group: 'Análisis y Control',
+    icon: FileText,
+  },
+  audit: { id: 'audit', label: 'Auditoría', group: 'Análisis y Control', icon: ShieldCheck },
+};
+
+function getUserInitials(nameOrEmail: string): string {
+  const clean = nameOrEmail.trim();
+  if (!clean) return 'AQ';
+  const parts = clean.split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
+}
 
 export default function App() {
   const {
@@ -56,96 +69,7 @@ export default function App() {
   // Navegación del shell autenticado
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  // Estado Auto-test Criptográfico
-  const [cryptoInput, setCryptoInput] = useState('');
-  const [sanitizedPreview, setSanitizedPreview] = useState('');
-  const [encryptedOutput, setEncryptedOutput] = useState('');
-  const [decryptedOutput, setDecryptedOutput] = useState('');
-  const [sha256Output, setSha256Output] = useState('');
-  const [corruptDecryptTest, setCorruptDecryptTest] = useState('');
-  const [cryptoError, setCryptoError] = useState<string | null>(null);
-
-  // Estado Audit Logs en tiempo real
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
-  const [auditError, setAuditError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    const unsubscribe = subscribeAuditLogs(
-      15,
-      (logs) => {
-        setAuditLogs(logs);
-        setAuditError(null);
-      },
-      (errMsg) => {
-        setAuditError(errMsg);
-      },
-    );
-
-    return () => unsubscribe();
-  }, [user]);
-
-  const visibleAuditLogs = user ? auditLogs : [];
-  const visibleAuditError = user ? auditError : null;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function runCryptoAutoTest() {
-      const sanitized = sanitizeInput(cryptoInput);
-      setSanitizedPreview(sanitized);
-
-      if (cryptoInput.length === 0) {
-        setEncryptedOutput('');
-        setDecryptedOutput('');
-        setSha256Output('');
-        setCryptoError(null);
-        return;
-      }
-
-      try {
-        const hash = await generateSHA256Hash(cryptoInput);
-        if (!cancelled) {
-          setSha256Output(hash);
-        }
-
-        if (!isCryptoConfigured()) {
-          if (!cancelled) {
-            setEncryptedOutput('');
-            setDecryptedOutput('');
-            setCryptoError(
-              'VITE_CRYPTO_SECRET_KEY no está configurada; no se puede ejecutar AES-GCM.',
-            );
-          }
-          return;
-        }
-
-        const cipher = await encryptData(cryptoInput);
-        const plain = await decryptData(cipher);
-
-        if (!cancelled) {
-          setEncryptedOutput(cipher);
-          setDecryptedOutput(plain);
-          setCryptoError(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setCryptoError(
-            error instanceof Error ? error.message : 'Error ejecutando auto-test criptográfico.',
-          );
-        }
-      }
-    }
-
-    void runCryptoAutoTest();
-    return () => {
-      cancelled = true;
-    };
-  }, [cryptoInput]);
+  const [activeAlertsCount, setActiveAlertsCount] = useState(0);
 
   async function handleLogout() {
     clearAuthError();
@@ -153,154 +77,219 @@ export default function App() {
     await logout();
   }
 
-  async function handleTestCorruptPayload() {
-    const result = await decryptData('payload_invalido_base64:datos_corruptos');
-    setCorruptDecryptTest(result);
-  }
-
-  if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#00753A] p-6">
-        <section className="w-full max-w-md rounded-2xl bg-[#FAF6EE] p-6 text-center shadow-lg">
-          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[#00753A] text-[#F2F0EC]">
-            <Leaf className="h-5 w-5" strokeWidth={1.75} />
-          </div>
-          <h1 className="text-lg font-semibold text-[#14261C]">AquaPlants / AquaBrain</h1>
-          <p className="mt-1 text-sm text-[#45564C]">
-            Verificando estado de sesión y perfil RBAC...
-          </p>
-        </section>
-      </main>
+  useEffect(() => {
+    const unsub = subscribeAlertas(
+      null,
+      (alertas) => setActiveAlertsCount(alertas.filter((a) => a.estado === 'Activa').length),
+      () => {},
     );
-  }
+    return () => unsub();
+  }, []);
 
-  if (!user) {
-    return <AuthScreen />;
-  }
+  const userRole = profile?.rol;
+  const isAdmin = userRole === 'Administrador';
+  const isSupervisor = userRole === 'Supervisor';
+  const canViewReport = isAdmin || isSupervisor;
+
+  const allowedTabs = useMemo<MenuValue[]>(() => {
+    if (isAdmin) return ['dashboard', 'crud', 'iot', 'report', 'audit'];
+    if (isSupervisor) return ['dashboard', 'crud', 'report'];
+    return ['dashboard', 'crud'];
+  }, [isAdmin, isSupervisor]);
+
+  useEffect(() => {
+    setActiveTab('dashboard');
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!allowedTabs.includes(activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [allowedTabs, activeTab]);
+
+  const menuItems = useMemo<BranchedMenuItem[]>(
+    () => {
+      const items: BranchedMenuItem[] = [
+        {
+          value: 'sec-general',
+          label: 'General',
+          icon: Folder,
+          defaultOpen: true,
+          children: [
+            {
+              value: 'dashboard',
+              label: 'Dashboard Operativo',
+              icon: LayoutGrid,
+              badge: activeAlertsCount,
+            },
+          ],
+        },
+        {
+          value: 'sec-operacion',
+          label: 'Operación',
+          icon: Folder,
+          defaultOpen: true,
+          children: [
+            { value: 'crud', label: 'Gestión de Operaciones', icon: Layers },
+            ...(isAdmin
+              ? [{ value: 'iot' as const, label: 'Simulador de Campo', icon: Cpu }]
+              : []),
+          ],
+        },
+      ];
+
+      if (canViewReport) {
+        items.push({
+          value: 'sec-analisis',
+          label: 'Análisis y Control',
+          icon: BarChart3,
+          defaultOpen: true,
+          dividerBefore: true,
+          children: [
+            { value: 'report', label: 'Informe de Gestión', icon: FileText },
+            ...(isAdmin
+              ? [{ value: 'audit' as const, label: 'Auditoría', icon: ShieldCheck }]
+              : []),
+          ],
+        });
+      }
+
+      return items;
+    },
+    [activeAlertsCount, isAdmin, canViewReport],
+  );
+
+  const displayName = profile?.nombre ?? user?.email ?? 'Usuario';
+  const displayRole =
+    profile?.rol ??
+    (profileLoading ? 'Cargando perfil...' : 'Sin perfil en Firestore');
+  const userInitials = getUserInitials(displayName);
+  const activeItem = TAB_META[activeTab];
+  const ActiveIcon = activeItem.icon;
+
+  const handleSelectMenu = (val: MenuValue) => {
+    if (val === 'sec-operacion' || val === 'sec-analisis') return;
+    setActiveTab(val);
+    setMobileMenuOpen(false);
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* ==================== CABECERA SUPERIOR ==================== */}
-      <header className="no-print sticky top-0 z-30 border-b border-slate-200 bg-white">
-        <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-6">
-          <div className="flex items-center gap-3">
+    <>
+      <LiquidSplashScreen isLoading={loading} />
+      {!loading &&
+        (!user ? (
+          <AuthScreen />
+        ) : !profile ? (
+          <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[#F8FAF9]">
+            <div className="h-9 w-9 animate-spin rounded-full border-2 border-[#E2EFE6] border-t-[#00753A]" />
+            <p className="text-sm font-medium text-[#1B432C]">Preparando entorno operativo...</p>
+          </div>
+        ) : (
+          <div
+            key={user.uid}
+            className="flex h-screen overflow-hidden bg-[#0E1F17] p-2.5 pl-0 text-[#F2F0EC] print:h-auto print:overflow-visible print:bg-white print:p-0"
+          >
+      {/* Botón flotante para abrir drawer en móvil */}
+      <button
+        type="button"
+        onClick={() => setMobileMenuOpen(true)}
+        aria-label="Abrir menú lateral"
+        className="no-print fixed top-5 left-5 z-30 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-xs transition-colors hover:bg-slate-50 lg:hidden"
+      >
+        <Menu className="h-5 w-5" strokeWidth={1.75} />
+      </button>
+
+      {/* Backdrop móvil */}
+      {mobileMenuOpen && (
+        <div
+          onClick={() => setMobileMenuOpen(false)}
+          className="no-print fixed inset-0 z-30 bg-[#07110C]/65 backdrop-blur-[1px] lg:hidden"
+          aria-hidden="true"
+        />
+      )}
+
+      {/* ==================== SIDEBAR CON BRANCHED MENU BOTÁNICO ==================== */}
+      <aside
+        className={`no-print fixed inset-y-0 left-0 z-40 flex w-[264px] shrink-0 flex-col justify-between bg-[#0E1F17] px-4 py-5 text-[#F2F0EC] transition-transform duration-200 lg:static lg:h-full lg:translate-x-0 ${
+          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* Cabecera con LogoAquaSVG.svg nítido */}
+          <div className="mb-6 flex items-center justify-between px-2 pt-1">
+            <img
+              src="/LogoAquaSVG.svg"
+              alt="AquaPlants"
+              className="h-8 w-auto object-contain"
+            />
+
             <button
               type="button"
-              onClick={() => setMobileMenuOpen((prev) => !prev)}
-              aria-label={mobileMenuOpen ? 'Cerrar menú lateral' : 'Abrir menú lateral'}
-              className="inline-flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-700 hover:bg-slate-50 lg:hidden"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-label="Cerrar menú móvil"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-[#9BB5A7] transition-colors hover:bg-white/10 hover:text-[#F2F0EC] lg:hidden"
             >
-              {mobileMenuOpen ? (
-                <X className="h-4 w-4" strokeWidth={1.75} />
-              ) : (
-                <Menu className="h-4 w-4" strokeWidth={1.75} />
-              )}
+              <X className="h-4 w-4" strokeWidth={1.75} />
             </button>
-
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-700 text-white">
-                <Leaf className="h-4 w-4" strokeWidth={1.75} />
-              </div>
-              <div>
-                <h1 className="text-sm font-semibold tracking-tight text-slate-900 sm:text-base">
-                  AquaPlants / AquaBrain
-                </h1>
-                <p className="hidden text-xs text-slate-500 sm:block">
-                  Monitoreo y Gestión de Cultivos Aeropónicos
-                </p>
-              </div>
-            </div>
-
-            <span className="hidden items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200 md:inline-flex">
-              <Cloud className="h-3.5 w-3.5" strokeWidth={1.75} />
-              Nube Firestore Activa
-            </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <p className="text-xs font-semibold text-slate-900">
-                {profile?.nombre ?? user.email ?? 'Usuario'}
-              </p>
-              <p className="text-xs text-slate-500">{profile?.email ?? user.email}</p>
-            </div>
-
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-800 ring-1 ring-inset ring-slate-200">
-              <UserCheck className="h-3.5 w-3.5 text-emerald-700" strokeWidth={1.75} />
-              {profile?.rol ??
-                (profileLoading ? 'Cargando perfil...' : 'Sin perfil en Firestore')}
-            </span>
-
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
-            >
-              <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Cerrar Sesión</span>
-            </button>
+          {/* Navegación con ramas botánicas y hojas animadas */}
+          <div className="flex-1 overflow-y-auto pr-0.5">
+            <BranchedMenu
+              items={menuItems as BranchedMenuItem<MenuValue>[]}
+              activeValue={activeTab}
+              onSelect={handleSelectMenu}
+              drawDuration={400}
+              trunk={20}
+              indent={48}
+            />
           </div>
         </div>
-      </header>
 
-      <div className="flex">
-        {/* ==================== BARRA LATERAL RESPONSIVE ==================== */}
-        {mobileMenuOpen && (
-          <div
-            onClick={() => setMobileMenuOpen(false)}
-            className="no-print fixed inset-0 z-20 bg-slate-900/30 lg:hidden"
-            aria-hidden="true"
-          />
-        )}
-
-        <aside
-          className={`no-print fixed top-16 bottom-0 left-0 z-20 w-64 shrink-0 border-r border-slate-200 bg-white p-4 transition-transform duration-200 lg:static lg:translate-x-0 ${
-            mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-          }`}
-        >
-          <nav aria-label="Navegación de módulos" className="space-y-1">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveTab(item.id);
-                    setMobileMenuOpen(false);
-                  }}
-                  className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-emerald-50 text-emerald-900 ring-1 ring-inset ring-emerald-200'
-                      : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                  }`}
-                >
-                  <Icon
-                    className={`h-4 w-4 shrink-0 ${
-                      isActive ? 'text-emerald-700' : 'text-slate-500'
-                    }`}
-                    strokeWidth={1.75}
-                  />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-            <p className="font-medium text-slate-800">Sesión Segura</p>
-            <p className="mt-1 truncate font-mono text-[11px] text-slate-500" title={user.uid}>
-              UID: {user.uid}
-            </p>
-            <p className="mt-1 text-[11px] text-slate-500">
-              Cifrado AES-GCM 256-bit y firmas SHA-256 activos
-            </p>
+        {/* Tarjeta compacta de usuario en el pie */}
+        <div className="mt-4 flex items-center justify-between gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.04] p-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E6A608] text-xs font-bold text-[#09150F]">
+              {userInitials}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-[#F2F0EC]">{displayName}</p>
+              <p className="truncate text-xs text-[#9BB5A7]">{displayRole}</p>
+            </div>
           </div>
-        </aside>
 
-        {/* ==================== CONTENIDO PRINCIPAL ==================== */}
-        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            aria-label="Cerrar sesión"
+            title="Cerrar sesión"
+            className="shrink-0 rounded-lg p-1.5 text-[#9BB5A7] transition-colors hover:bg-white/10 hover:text-[#F2F0EC]"
+          >
+            <LogOut className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
+      </aside>
+
+      {/* ==================== LIENZO PRINCIPAL ENMARCADO (FULL INSET FRAME) ==================== */}
+      <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#F9FAFB] text-slate-900 shadow-sm print:block print:h-auto print:min-h-0 print:overflow-visible print:rounded-none print:border-none print:bg-white print:p-0 print:m-0 print:shadow-none">
+        <div className="custom-scrollbar h-full flex-1 overflow-y-auto print:block print:h-auto print:min-h-0 print:overflow-visible print:p-0 print:m-0">
+          {/* Breadcrumb minimalista */}
+        <div className="no-print flex items-center gap-2 px-4 pt-16 pb-3 text-xs text-slate-500 sm:px-6 lg:px-8 lg:pt-5">
+          <span>AquaPlants</span>
+          <span aria-hidden="true" className="text-slate-300">
+            /
+          </span>
+          <span>{activeItem.group}</span>
+          <span aria-hidden="true" className="text-slate-300">
+            /
+          </span>
+          <span className="inline-flex items-center gap-1.5 font-medium text-slate-800">
+            <ActiveIcon className="h-3.5 w-3.5 text-[#00753A]" strokeWidth={1.75} />
+            {activeItem.label}
+          </span>
+        </div>
+
+        <div className="px-4 pb-8 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl space-y-6">
             {authError && (
               <section aria-live="polite" className="no-print">
@@ -329,7 +318,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'iot' && (
+            {activeTab === 'iot' && isAdmin && (
               <IotSimulator
                 profile={profile}
                 userUid={user.uid}
@@ -337,7 +326,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'report' && (
+            {activeTab === 'report' && canViewReport && (
               <ManagementReport
                 profile={profile}
                 userUid={user.uid}
@@ -345,209 +334,13 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'audit' && (
-              <section className="space-y-6">
-                <div>
-                  <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-                    Auditoría Inmutable y Auto-test Criptográfico
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Verificación en vivo de cifrado AES-GCM (PBKDF2 SHA-256), sanitización XSS y
-                    bitácora de eventos
-                  </p>
-                </div>
-
-                {/* Auto-test Criptográfico */}
-                <section
-                  id="autotest-criptografico"
-                  className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
-                >
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <KeyRound className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
-                    <h3 className="text-base font-semibold text-slate-900">
-                      Auto-test Criptográfico (AES-GCM 256-bit + PBKDF2 + SHA-256 + XSS)
-                    </h3>
-                  </div>
-
-                  <form
-                    onSubmit={(e) => e.preventDefault()}
-                    className="rounded-lg border border-slate-200 bg-slate-50/70 p-4"
-                  >
-                    <fieldset className="space-y-3">
-                      <legend className="text-sm font-medium text-slate-800">
-                        Entrada de Prueba en Tiempo Real
-                      </legend>
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                        <div className="flex-1">
-                          <label
-                            htmlFor="crypto-test-input"
-                            className="mb-1 block text-xs font-medium text-slate-700"
-                          >
-                            Escribe un texto (puedes incluir etiquetas HTML para probar
-                            sanitización)
-                          </label>
-                          <input
-                            id="crypto-test-input"
-                            type="text"
-                            value={cryptoInput}
-                            onChange={(e) => setCryptoInput(e.target.value)}
-                            placeholder="Ej: Sensor PH-01 = 6.2 <script>alert(1)</script>"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void handleTestCorruptPayload()}
-                          className="shrink-0 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                          Probar Descifrado de Payload Corrupto
-                        </button>
-                      </div>
-                    </fieldset>
-                  </form>
-
-                  {cryptoError && (
-                    <p
-                      role="alert"
-                      className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800"
-                    >
-                      {cryptoError}
-                    </p>
-                  )}
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                          <th className="px-3 py-2.5">Operación</th>
-                          <th className="px-3 py-2.5">Resultado</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        <tr>
-                          <th className="px-3 py-2.5 font-medium text-slate-700">
-                            Entrada Sanitizada (anti-XSS)
-                          </th>
-                          <td className="px-3 py-2.5 font-mono text-xs text-slate-800">
-                            {sanitizedPreview || '(vacío)'}
-                          </td>
-                        </tr>
-                        <tr>
-                          <th className="px-3 py-2.5 font-medium text-slate-700">
-                            Cifrado AES-GCM (base64(iv):base64(ciphertext))
-                          </th>
-                          <td className="break-all px-3 py-2.5 font-mono text-xs text-emerald-800">
-                            {encryptedOutput || '(escribe un texto arriba)'}
-                          </td>
-                        </tr>
-                        <tr>
-                          <th className="px-3 py-2.5 font-medium text-slate-700">
-                            Descifrado AES-GCM
-                          </th>
-                          <td className="px-3 py-2.5 font-mono text-xs text-slate-800">
-                            {decryptedOutput || '(escribe un texto arriba)'}
-                          </td>
-                        </tr>
-                        <tr>
-                          <th className="px-3 py-2.5 font-medium text-slate-700">
-                            Digest SHA-256 (hex minúsculas)
-                          </th>
-                          <td className="break-all px-3 py-2.5 font-mono text-xs text-slate-600">
-                            {sha256Output || '(escribe un texto arriba)'}
-                          </td>
-                        </tr>
-                        {corruptDecryptTest && (
-                          <tr>
-                            <th className="px-3 py-2.5 font-medium text-slate-700">
-                              Prueba controlada con payload corrupto
-                            </th>
-                            <td className="px-3 py-2.5 font-mono text-xs text-red-700">
-                              {corruptDecryptTest}
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-
-                {/* Bitácora Audit Logs */}
-                <section
-                  id="auditoria-tiempo-real"
-                  className="rounded-xl border border-slate-200 bg-white shadow-xs"
-                >
-                  <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4">
-                    <ShieldCheck className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
-                    <h3 className="text-base font-semibold text-slate-900">
-                      Bitácora de Auditoría Inmutable (Últimos 15 Registros en Tiempo Real)
-                    </h3>
-                  </div>
-
-                  {visibleAuditError && (
-                    <p role="alert" className="px-5 py-3 text-sm text-red-700">
-                      {visibleAuditError}
-                    </p>
-                  )}
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                          <th className="px-3 py-2.5">Timestamp (ISO 8601)</th>
-                          <th className="px-3 py-2.5">Acción</th>
-                          <th className="px-3 py-2.5">UID</th>
-                          <th className="px-3 py-2.5">Correo</th>
-                          <th className="px-3 py-2.5">Rol</th>
-                          <th className="px-3 py-2.5">Detalle</th>
-                          <th className="px-3 py-2.5">Hash Evento (SHA-256)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {visibleAuditLogs.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
-                              No hay registros en audit_logs todavía.
-                            </td>
-                          </tr>
-                        ) : (
-                          visibleAuditLogs.map((entry) => (
-                            <tr
-                              key={entry.id ?? `${entry.timestamp}-${entry.hash_evento}`}
-                              className="transition-colors hover:bg-slate-50/80"
-                            >
-                              <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-slate-600 tabular-nums">
-                                {entry.timestamp}
-                              </td>
-                              <td className="px-3 py-2.5 font-mono text-xs font-medium text-slate-900">
-                                {entry.accion}
-                              </td>
-                              <td className="px-3 py-2.5 font-mono text-xs text-slate-500">
-                                {entry.uid}
-                              </td>
-                              <td className="px-3 py-2.5 text-slate-700">{entry.email}</td>
-                              <td className="px-3 py-2.5">
-                                <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-                                  {entry.rol}
-                                </span>
-                              </td>
-                              <td className="max-w-xs px-3 py-2.5 text-slate-600">
-                                {entry.detalle}
-                              </td>
-                              <td className="px-3 py-2.5 font-mono text-xs text-slate-500">
-                                {entry.hash_evento}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              </section>
-            )}
+            {activeTab === 'audit' && isAdmin && <SecurityAudit profile={profile} />}
           </div>
-        </main>
-      </div>
+        </div>
+        </div>
+      </main>
     </div>
+        ))}
+    </>
   );
 }

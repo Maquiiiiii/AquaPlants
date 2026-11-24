@@ -225,3 +225,29 @@ AquaPlants/
 - `177b9c8` — `feat(iot): implementa simulador IoT, firma SHA-256, alertas y cola offline cifrada`
 - `c72e14e` — `feat(dashboard-report): implementa dashboard con verificación SHA-256 e informe de gestión exportable`
 - `4fb8ec4` — `feat(ui-deploy): aplica diseño profesional Tailwind, gráficos Recharts, seed data y despliegue en Firebase Hosting`
+
+
+---
+
+## 7. Actualizaciones Recientes de UI/UX y Flujo Operativo
+
+- **Navegación y Estética Botánica (`src/App.tsx`, `src/index.css`):**
+  - Se renombró la vista `Gestión CRUD` a `Gestión de Operaciones` para orientar el lenguaje al usuario agrícola.
+  - Se añadieron `@keyframes` explícitos de entrada y salida (`modalBackdropIn`, `modalBackdropOut`, `modalCardIn`, `modalCardOut`) y utilidades `.animate-backdrop-in`, `.animate-backdrop-out`, `.animate-modal-in` y `.animate-modal-out` con soporte para `prefers-reduced-motion`.
+- **Dashboard Operativo (`src/components/DashboardMonitor.tsx`):**
+  - Se limpió la tabla de **Histórico de Mediciones** eliminando la columna `Integridad SHA-256` y el modal criptográfico (que permanece en su vista dedicada de Auditoría), dejando 5 columnas equilibradas mediante `<colgroup>` (`Fecha y hora`, `Instalación`, `Sensor / Variable`, `Valor` alineado a la izquierda y `Estado`).
+  - Se incorporó formato editorial de fecha/hora (`24 Nov · 03:29:42 a. m.`), filtro rápido segmentado (`Todas` | `Fuera de rango`) y tipografía `font-sans font-medium tabular-nums` uniforme en códigos de instalación y sensor.
+- **Gestión de Operaciones (`src/components/CrudManager.tsx`, `src/services/crudService.ts`, `firestore.rules`):**
+  - Se implementó el flujo centrado en la **Instalación como espacio principal**: creación "Todo en Uno" con cultivos y sensores iniciales, modal contextual de detalle de instalación (`Desvincular`, `Crear nuevo aquí`, `Vincular disponible` con disclosure colapsable de elementos ocupados) y sub-modales apilados (`z-[60]`) renderizados mediante `createPortal(..., document.body)` con animación `useAnimatedModal`.
+  - Se añadió validación estricta `1:1` de exclusividad (`validateCultivoExclusivity`, `validateSensorExclusivity`) y soporte para estado `"Sin asignar"` (`id_sistema: ""`) en `crudService.ts` y `firestore.rules`.
+
+- **Simulador de Campo (`src/components/IotSimulator.tsx`, `src/services/iotService.ts`):**
+  - Se rediseñó la vista con lenguaje 100 % agrícola ("Simulador de Campo", respaldo local sin conexión, prueba de carga operativa de 50 lecturas con 4 KPIs tonales) y monitor en vivo con `reabrirAlerta` para deshacer alertas resueltas.
+- **Informe Ejecutivo y PDF (`src/components/ManagementReport.tsx`, `src/index.css`, `index.html`):**
+  - Se convirtió en un Informe Ejecutivo Agrícola de 4 bloques con diagnóstico agronómico agrupado por sensor ("Atención Prioritaria en Cultivos"), exportación PDF sin scrollbars ni página extra en blanco (`@page { size: auto; margin: 0mm; }`) y cabecera editorial centrada.
+- **Auditoría y Seguridad (`src/components/SecurityAudit.tsx`):**
+  - Se extrajo la vista dedicada de Auditoría con 4 KPIs tonales, panel simétrico de verificación en vivo (`AES-GCM` y `SHA-256`) y bitácora inmutable paginada (10 registros/página) con filtros `CustomSelect`.
+- **RBAC Integral, Validación Reactiva y Estabilidad de Sesión (`src/App.tsx`, `src/context/AuthContext.tsx`, `src/components/AuthScreen.tsx`):**
+  - Navegación dinámica y guardia reactiva para `Administrador` (5 vistas), `Supervisor` (3 vistas, alertas en modo `"Atención por encargado"`) y `Encargado de cultivo` (2 vistas, `CrudManager` en modo solo lectura).
+  - Validación reactiva en tiempo real de `Repetir contraseña` en `AuthScreen.tsx`.
+  - Limpieza atómica de sesión, descarte de callbacks obsoletos (`authRequestRef`), reintento ante `permission-denied` en `fetchUserProfile` y guarda de carga hasta resolver `profile` en `App.tsx`, desplegado en `https://aquaplants-24f92.web.app`.

@@ -20,6 +20,7 @@ import {
 import type { AuditLogEntry, UserProfile } from '../types/auth';
 import {
   TIPOS_VARIABLE,
+  UNIDAD_POR_VARIABLE,
   type Alerta,
   type Cultivo,
   type Instalacion,
@@ -27,6 +28,7 @@ import {
   type Sensor,
   type TipoVariable,
 } from '../types/domain';
+import { formatVariableLabel } from '../utils/formatters';
 
 interface ManagementReportProps {
   profile: UserProfile | null;
@@ -36,6 +38,7 @@ interface ManagementReportProps {
 
 interface VariableStats {
   variable: TipoVariable;
+  unidad: string;
   total: number;
   min: string;
   max: string;
@@ -43,25 +46,80 @@ interface VariableStats {
   fueraUmbral: number;
 }
 
-const CRITICAL_ACTIONS = [
-  'REGISTRO_USUARIO',
-  'LOGIN_EXITOSO',
-  'LOGOUT',
-  'CREAR_INSTALACION',
-  'ACTUALIZAR_INSTALACION',
-  'ELIMINAR_INSTALACION',
-  'CREAR_CULTIVO',
-  'ACTUALIZAR_CULTIVO',
-  'ELIMINAR_CULTIVO',
-  'CREAR_SENSOR',
-  'ACTUALIZAR_SENSOR',
-  'ELIMINAR_SENSOR',
-  'SINCRONIZACION_OFFLINE',
-  'PRUEBA_ESTRES_IOT',
-  'RESOLVER_ALERTA',
-  'CARGAR_DATOS_SEMILLA',
-  'GENERAR_INFORME_GESTION',
+const ACTION_LABELS: Record<string, string> = {
+  REGISTRO_USUARIO: 'Registro de usuario',
+  LOGIN_EXITOSO: 'Inicio de sesión',
+  LOGOUT: 'Cierre de sesión',
+  CREAR_INSTALACION: 'Creación de instalación',
+  ACTUALIZAR_INSTALACION: 'Actualización de instalación',
+  ELIMINAR_INSTALACION: 'Eliminación de instalación',
+  CREAR_CULTIVO: 'Registro de cultivo',
+  ACTUALIZAR_CULTIVO: 'Actualización de cultivo',
+  ELIMINAR_CULTIVO: 'Eliminación de cultivo',
+  CREAR_SENSOR: 'Alta de sensor',
+  ACTUALIZAR_SENSOR: 'Actualización de sensor',
+  ELIMINAR_SENSOR: 'Baja de sensor',
+  SINCRONIZACION_OFFLINE: 'Sincronización sin conexión',
+  PRUEBA_ESTRES_IOT: 'Prueba de carga operativa',
+  RESOLVER_ALERTA: 'Resolución de alerta',
+  REABRIR_ALERTA: 'Reapertura de alerta',
+  CARGAR_DATOS_SEMILLA: 'Carga de datos iniciales',
+  GENERAR_INFORME_GESTION: 'Emisión de informe',
+};
+
+const MONTH_NAMES_ES = [
+  'Ene',
+  'Feb',
+  'Mar',
+  'Abr',
+  'May',
+  'Jun',
+  'Jul',
+  'Ago',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dic',
 ] as const;
+
+function formatUnit(raw: string): string {
+  if (raw === 'Lmin') return 'L/min';
+  if (raw === 'horas') return 'h';
+  return raw;
+}
+
+function formatEditorialDateTime(timestamp: string | Date): string {
+  const parsedDate = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  if (Number.isNaN(parsedDate.getTime())) return String(timestamp);
+  const day = String(parsedDate.getDate()).padStart(2, '0');
+  const month = MONTH_NAMES_ES[parsedDate.getMonth()];
+  const time = parsedDate.toLocaleTimeString('es-CL', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${day} ${month} · ${time}`;
+}
+
+function getAgronomicRecommendation(alerta: Alerta): string {
+  const varKey = alerta.tipo_variable.trim().toLowerCase();
+  const isBelowMin = alerta.umbral_superado.toLowerCase().includes('mín');
+
+  if (varKey === 'caudal') {
+    return isBelowMin
+      ? 'Riego insuficiente: revisar bomba, filtros o boquillas obstruidas para evitar estrés hídrico en las plantas.'
+      : 'Caudal excesivo: verificar válvula reguladora o posibles fugas en línea.';
+  }
+  if (varKey === 'consumo_hidrico') {
+    return 'Variación en consumo de agua: revisar nivel del estanque y demanda hídrica de los cultivos.';
+  }
+  if (varKey === 'nutrientes') {
+    return 'Concentración de nutrientes fuera de rango: calibrar solución nutritiva (ppm) para proteger el desarrollo radicular.';
+  }
+  if (varKey === 'fotoperiodo') {
+    return 'Ciclo de iluminación alterado: revisar temporizadores de luz para mantener el fotoperíodo óptimo.';
+  }
+  return 'Revisar el estado operativo del sensor y las condiciones del invernadero.';
+}
 
 export default function ManagementReport({
   profile,
@@ -75,14 +133,9 @@ export default function ManagementReport({
   const [alertas, setAlertas] = useState<Alerta[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
-
-  const [emittedAt, setEmittedAt] = useState<string>(() => new Date().toISOString());
-  const [integrityCounts, setIntegrityCounts] = useState<{ valid: number; total: number }>({
-    valid: 0,
-    total: 0,
-  });
-  const [reportFeedback, setReportFeedback] = useState<string | null>(null);
-  const [emitting, setEmitting] = useState(false);
+  const [verifiedCount, setVerifiedCount] = useState<number>(0);
+  const [reportGeneratedAt, setReportGeneratedAt] = useState<Date>(() => new Date());
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const unsubInst = subscribeInstalaciones(setInstalaciones, setStreamError);
@@ -90,7 +143,7 @@ export default function ManagementReport({
     const unsubSen = subscribeSensores(setSensores, setStreamError);
     const unsubMed = subscribeMediciones(null, setMediciones, setStreamError);
     const unsubAle = subscribeAlertas(null, setAlertas, setStreamError);
-    const unsubAud = subscribeAuditLogs(null, setAuditLogs, setStreamError);
+    const unsubLog = subscribeAuditLogs(null, setAuditLogs, setStreamError);
 
     return () => {
       unsubInst();
@@ -98,483 +151,479 @@ export default function ManagementReport({
       unsubSen();
       unsubMed();
       unsubAle();
-      unsubAud();
+      unsubLog();
     };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-
-    async function computeIntegrityPercentage() {
-      if (mediciones.length === 0) {
-        if (!cancelled) {
-          setIntegrityCounts({ valid: 0, total: 0 });
-        }
-        return;
-      }
-
+    async function verifyAll() {
       const checks = await Promise.all(
         mediciones.map(async (m) => {
-          const recomputed = await calcularHashIntegridad(
+          const hash = await calcularHashIntegridad(
             m.id_sistema,
             m.id_dispositivo,
             m.id_sensor,
             m.valor,
             m.timestamp,
           );
-          return recomputed === m.hash_integridad;
+          return hash === m.hash_integridad;
         }),
       );
-
       if (!cancelled) {
-        const valid = checks.filter(Boolean).length;
-        setIntegrityCounts({ valid, total: checks.length });
+        setVerifiedCount(checks.filter(Boolean).length);
       }
     }
-
-    void computeIntegrityPercentage();
-
+    void verifyAll();
     return () => {
       cancelled = true;
     };
   }, [mediciones]);
 
-  const issuerName = profile?.nombre ?? userEmail;
-  const issuerEmail = profile?.email ?? userEmail;
-  const issuerRole = profile?.rol ?? 'Encargado de cultivo';
-
-  const platformStatus = useMemo(() => {
-    const activeAlerts = alertas.filter((a) => a.estado === 'Activa');
-    const criticalActive = activeAlerts.filter((a) => a.nivel === 'Crítica').length;
-    const disconnected = instalaciones.filter((i) => i.estado_conexion === 'Desconectado').length;
-
-    if (criticalActive > 0) {
-      return `CRÍTICO (${criticalActive} alerta(s) crítica(s) activa(s))`;
-    }
-    if (activeAlerts.length > 0 || disconnected > 0) {
-      return `ATENCIÓN REQUERIDA (${activeAlerts.length} alerta(s) activa(s), ${disconnected} instalación(es) desconectada(s))`;
-    }
-    return 'OPERACIÓN NORMAL (Sin alertas activas)';
-  }, [alertas, instalaciones]);
-
-  const installSummary = useMemo(() => {
-    return instalaciones.map((inst) => ({
-      ...inst,
-      cantidadCultivos: cultivos.filter((c) => c.id_sistema === inst.id_sistema).length,
-      cantidadSensores: sensores.filter((s) => s.id_sistema === inst.id_sistema).length,
-    }));
-  }, [instalaciones, cultivos, sensores]);
-
   const variableStats = useMemo<VariableStats[]>(() => {
-    return TIPOS_VARIABLE.map((variable) => {
-      const items = mediciones.filter((m) => m.tipo_variable === variable);
+    return TIPOS_VARIABLE.map((tv) => {
+      const items = mediciones.filter((m) => m.tipo_variable === tv);
       if (items.length === 0) {
         return {
-          variable,
+          variable: tv,
+          unidad: formatUnit(UNIDAD_POR_VARIABLE[tv]),
           total: 0,
-          min: 'N/A',
-          max: 'N/A',
-          promedio: 'N/A',
+          min: '—',
+          max: '—',
+          promedio: '—',
           fueraUmbral: 0,
         };
       }
+      const values = items.map((m) => m.valor);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const avg = values.reduce((acc, v) => acc + v, 0) / values.length;
+      const fueraUmbral = items.filter((m) => m.alerta).length;
 
-      let minVal = items[0].valor;
-      let maxVal = items[0].valor;
-      let sum = 0;
-      let outOfRange = 0;
-
-      for (const item of items) {
-        if (item.valor < minVal) minVal = item.valor;
-        if (item.valor > maxVal) maxVal = item.valor;
-        sum += item.valor;
-        if (item.alerta) outOfRange += 1;
-      }
-
-      const avg = (sum / items.length).toFixed(2);
       return {
-        variable,
+        variable: tv,
+        unidad: formatUnit(UNIDAD_POR_VARIABLE[tv]),
         total: items.length,
-        min: String(Number(minVal.toFixed(2))),
-        max: String(Number(maxVal.toFixed(2))),
-        promedio: avg,
-        fueraUmbral: outOfRange,
+        min: min.toFixed(2),
+        max: max.toFixed(2),
+        promedio: avg.toFixed(2),
+        fueraUmbral,
       };
     });
   }, [mediciones]);
 
-  const alertIndicators = useMemo(() => {
+  const alertSummary = useMemo(() => {
     const total = alertas.length;
     const activas = alertas.filter((a) => a.estado === 'Activa').length;
     const resueltas = alertas.filter((a) => a.estado === 'Resuelta').length;
-    const tasaResolucion = total > 0 ? ((resueltas / total) * 100).toFixed(2) : '0.00';
-
+    const tasaResolucion = total > 0 ? Math.round((resueltas / total) * 100) : 100;
     return { total, activas, resueltas, tasaResolucion };
   }, [alertas]);
 
-  const securityBreakdown = useMemo(() => {
+  const integrityRate = useMemo(() => {
+    if (mediciones.length === 0) return 100;
+    return Math.round((verifiedCount / mediciones.length) * 100);
+  }, [mediciones.length, verifiedCount]);
+
+  const actionBreakdown = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const action of CRITICAL_ACTIONS) {
-      counts[action] = 0;
+    for (const log of auditLogs) {
+      counts[log.accion] = (counts[log.accion] ?? 0) + 1;
     }
-    for (const entry of auditLogs) {
-      counts[entry.accion] = (counts[entry.accion] ?? 0) + 1;
-    }
+    return Object.entries(counts)
+      .map(([accion, count]) => ({
+        accion,
+        label: ACTION_LABELS[accion] ?? formatVariableLabel(accion),
+        count,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [auditLogs]);
 
-    const integrityPct =
-      integrityCounts.total > 0
-        ? ((integrityCounts.valid / integrityCounts.total) * 100).toFixed(2)
-        : '100.00';
-
-    return {
-      totalEvents: auditLogs.length,
-      counts: Object.entries(counts).filter(([, count]) => count > 0),
-      integrityPct,
-    };
-  }, [auditLogs, integrityCounts]);
-
-  async function recordReportAudit(detailMessage: string) {
-    setEmitting(true);
-    setReportFeedback(null);
-    const nowIso = new Date().toISOString();
-    setEmittedAt(nowIso);
+  async function handleRefreshCut() {
+    setRefreshing(true);
+    setReportGeneratedAt(new Date());
     try {
       await logAuditEvent({
         uid: userUid,
-        email: issuerEmail,
-        rol: issuerRole,
+        email: profile?.email ?? userEmail,
+        rol: profile?.rol ?? 'Encargado de cultivo',
         accion: 'GENERAR_INFORME_GESTION',
-        detalle: `${detailMessage} (corte ${nowIso})`,
+        detalle: `Corte ejecutivo actualizado (${instalaciones.length} instalaciones, ${mediciones.length} lecturas)`,
       });
-      setReportFeedback(`Informe de gestión actualizado (${nowIso}) y registrado en audit_logs.`);
-    } catch (error) {
-      setReportFeedback(
-        error instanceof Error ? error.message : 'Error registrando auditoría del informe.',
-      );
     } finally {
-      setEmitting(false);
+      setRefreshing(false);
     }
   }
 
-  async function handleGenerateCut() {
-    await recordReportAudit('Emisión/actualización de corte de Informe de Gestión Operativa');
+  function handlePrint() {
+    window.print();
   }
 
-  async function handlePrintPdf() {
-    await recordReportAudit('Exportación/impresión PDF de Informe de Gestión Operativa');
-    globalThis.print();
-  }
+  const operationStable = alertSummary.activas === 0;
 
   return (
-    <section id="informe-gestion" className="print-only-container space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-900">
-            <FileText className="h-5 w-5 text-emerald-600" strokeWidth={1.75} />
-            Informe de Gestión Operativa AquaPlants / AquaBrain
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Documento corporativo consolidado desde Cloud Firestore con respaldo de integridad
+    <section className="print-only-container space-y-6 print:mb-0 print:px-[14mm] print:py-[12mm]">
+      {/* Encabezado editorial exclusivo para impresión / PDF */}
+      <div className="mb-6 hidden flex-col items-center text-center print:flex">
+        <p className="text-lg font-bold tracking-tight text-[#1B432C]">AquaPlants · AquaBrain</p>
+        <p className="mt-0.5 text-xs font-medium tracking-wide text-slate-500">
+          Monitoreo y Gestión Agrícola
+        </p>
+      </div>
+
+      {/* Encabezado ejecutivo y acciones */}
+      <div className="print-break-inside-avoid flex flex-col justify-between gap-4 rounded-3xl border-0 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.03)] sm:flex-row sm:items-center">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#E2EFE6] text-[#1B432C]">
+              <FileText className="h-4 w-4" />
+            </div>
+            <h2 className="text-xl font-bold tracking-tight text-slate-900">
+              Informe de Gestión Operativa
+            </h2>
+            <span
+              className={`rounded-full px-3 py-0.5 text-xs font-semibold ${
+                operationStable
+                  ? 'bg-[#E2EFE6] text-[#1B432C]'
+                  : 'bg-[#F3E5D8] text-[#5C3419]'
+              }`}
+            >
+              {operationStable ? 'Operación estable' : 'Requiere atención'}
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 tabular-nums">
+            Emitido el {formatEditorialDateTime(reportGeneratedAt)} · Responsable:{' '}
+            <span className="font-medium text-slate-700">{profile?.email ?? userEmail}</span> ·{' '}
+            <span className="rounded-full bg-[#F4F6F5] px-2 py-0.5 font-medium text-slate-600">
+              {profile?.rol ?? 'Encargado de cultivo'}
+            </span>
           </p>
         </div>
 
-        <div className="no-print flex flex-wrap gap-2">
+        <div className="no-print flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            onClick={() => void handleGenerateCut()}
-            disabled={emitting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:opacity-60"
+            disabled={refreshing}
+            onClick={() => void handleRefreshCut()}
+            className="inline-flex items-center gap-2 rounded-full border-0 bg-[#E2EFE6] px-4 py-2 text-xs font-semibold text-[#1B432C] transition-colors hover:bg-[#D2E6D8] disabled:opacity-50"
           >
-            <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
-            {emitting ? 'Emitiendo...' : 'Generar / Actualizar Corte de Informe'}
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Actualizar corte
           </button>
           <button
             type="button"
-            onClick={() => void handlePrintPdf()}
-            disabled={emitting}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
+            onClick={handlePrint}
+            className="inline-flex items-center gap-2 rounded-full border-0 bg-[#00753A] px-4 py-2 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#00612F]"
           >
-            <Printer className="h-4 w-4" strokeWidth={1.75} />
-            Imprimir / Exportar Informe a PDF
+            <Printer className="h-3.5 w-3.5" />
+            Exportar / Imprimir PDF
           </button>
         </div>
       </div>
 
       {streamError && (
-        <div
-          role="alert"
-          className="no-print rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
-        >
+        <p role="alert" className="rounded-2xl border-0 bg-[#FDF7F7] px-4 py-3 text-sm text-[#9E2A2B]">
           {streamError}
-        </div>
+        </p>
       )}
 
-      {reportFeedback && (
-        <div
-          role="status"
-          className="no-print flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
-        >
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-700" strokeWidth={1.75} />
-          <span>{reportFeedback}</span>
-        </div>
-      )}
-
-      {/* ==================== a) ENCABEZADO DE EMISIÓN ==================== */}
-      <section
-        aria-label="Encabezado de emisión del informe"
-        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
-      >
-        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
-          a) Encabezado de Emisión
+      {/* 1. Resumen Operativo por Instalación */}
+      <div className="print-break-inside-avoid rounded-3xl border-0 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.03)]">
+        <h3 className="text-base font-semibold text-slate-900">
+          1. Resumen Operativo por Instalación
         </h3>
-        <div className="overflow-x-auto">
+        <div className="print-table-wrapper mt-4 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                <th className="px-3 py-2">Campo de Emisión</th>
-                <th className="px-3 py-2">Valor</th>
+              <tr className="bg-slate-50/70 text-[11px] font-semibold tracking-wider text-slate-400 uppercase">
+                <th className="px-4 py-3">Código</th>
+                <th className="px-4 py-3">Instalación</th>
+                <th className="px-4 py-3">Ubicación</th>
+                <th className="px-4 py-3 text-right">Cultivos</th>
+                <th className="px-4 py-3 text-right">Sensores</th>
+                <th className="px-4 py-3">Estado</th>
+                <th className="px-4 py-3 text-right">Última lectura</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              <tr>
-                <th className="px-3 py-2 font-medium text-slate-700">
-                  Fecha y Hora Exacta de Generación (ISO 8601)
-                </th>
-                <td className="px-3 py-2 font-mono text-xs text-slate-800 tabular-nums">
-                  {emittedAt}
-                </td>
-              </tr>
-              <tr>
-                <th className="px-3 py-2 font-medium text-slate-700">Fecha y Hora Local</th>
-                <td className="px-3 py-2 text-slate-800 tabular-nums">
-                  {new Date(emittedAt).toLocaleString('es-CL')}
-                </td>
-              </tr>
-              <tr>
-                <th className="px-3 py-2 font-medium text-slate-700">Usuario Emisor</th>
-                <td className="px-3 py-2 text-slate-800">
-                  {issuerName} ({issuerEmail})
-                </td>
-              </tr>
-              <tr>
-                <th className="px-3 py-2 font-medium text-slate-700">Rol del Emisor</th>
-                <td className="px-3 py-2 text-slate-800">{issuerRole}</td>
-              </tr>
-              <tr>
-                <th className="px-3 py-2 font-medium text-slate-700">
-                  Estado General de la Plataforma
-                </th>
-                <td className="px-3 py-2 font-semibold text-slate-900">{platformStatus}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* ==================== b) RESUMEN POR INSTALACIÓN ==================== */}
-      <section
-        aria-label="Resumen operativo por instalación"
-        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
-      >
-        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
-          b) Resumen Operativo por Instalación
-        </h3>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                <th className="px-3 py-2">ID Sistema</th>
-                <th className="px-3 py-2">Nombre</th>
-                <th className="px-3 py-2">Ubicación (Descifrada)</th>
-                <th className="px-3 py-2 text-right">Cultivos</th>
-                <th className="px-3 py-2 text-right">Sensores</th>
-                <th className="px-3 py-2">Estado Conexión</th>
-                <th className="px-3 py-2">Última Comunicación</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {installSummary.length === 0 ? (
+              {instalaciones.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
-                    No existen instalaciones registradas.
+                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
+                    No hay instalaciones registradas.
                   </td>
                 </tr>
               ) : (
-                installSummary.map((inst) => (
-                  <tr key={inst.id}>
-                    <td className="px-3 py-2 font-mono text-xs font-medium text-slate-900">
-                      {inst.id_sistema}
-                    </td>
-                    <td className="px-3 py-2 text-slate-800">{inst.nombre}</td>
-                    <td className="px-3 py-2 text-slate-700">
-                      {inst.ubicacion_descifrada ?? ''}
-                    </td>
-                    <td className="px-3 py-2 text-right font-medium tabular-nums">
-                      {inst.cantidadCultivos}
-                    </td>
-                    <td className="px-3 py-2 text-right font-medium tabular-nums">
-                      {inst.cantidadSensores}
-                    </td>
-                    <td className="px-3 py-2 text-slate-700">{inst.estado_conexion}</td>
-                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-slate-500 tabular-nums">
-                      {inst.ultima_comunicacion}
-                    </td>
-                  </tr>
-                ))
+                instalaciones.map((inst) => {
+                  const cultCount = cultivos.filter((c) => c.id_sistema === inst.id_sistema).length;
+                  const senCount = sensores.filter((s) => s.id_sistema === inst.id_sistema).length;
+                  const lastMed = mediciones.find((m) => m.id_sistema === inst.id_sistema);
+                  return (
+                    <tr key={inst.id} className="hover:bg-slate-50/70">
+                      <td className="whitespace-nowrap px-4 py-3 font-sans font-medium text-slate-800 tabular-nums">
+                        {inst.id_sistema}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{inst.nombre}</td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {inst.ubicacion_descifrada ?? 'Sin ubicación'}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700 tabular-nums">
+                        {cultCount}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700 tabular-nums">
+                        {senCount}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                            inst.estado_conexion === 'En línea'
+                              ? 'bg-[#E2EFE6] text-[#1B432C]'
+                              : 'bg-[#F3E5D8] text-[#5C3419]'
+                          }`}
+                        >
+                          {inst.estado_conexion}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-xs text-slate-600 tabular-nums">
+                        {lastMed ? formatEditorialDateTime(lastMed.timestamp) : 'Sin lecturas'}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
-      </section>
+      </div>
 
-      {/* ==================== c) ESTADÍSTICAS POR VARIABLE ==================== */}
-      <section
-        aria-label="Estadísticas por variable monitoreada"
-        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
-      >
-        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
-          c) Estadísticas por Variable Monitoreada
+      {/* 2. Estadísticas por Variable Monitoreada */}
+      <div className="print-break-inside-avoid rounded-3xl border-0 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.03)]">
+        <h3 className="text-base font-semibold text-slate-900">
+          2. Estadísticas por Variable Monitoreada
         </h3>
-        <div className="overflow-x-auto">
+        <div className="print-table-wrapper mt-4 overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                <th className="px-3 py-2">Variable Monitoreada</th>
-                <th className="px-3 py-2 text-right">Total Mediciones</th>
-                <th className="px-3 py-2 text-right">Valor Mínimo</th>
-                <th className="px-3 py-2 text-right">Valor Máximo</th>
-                <th className="px-3 py-2 text-right">Valor Promedio</th>
-                <th className="px-3 py-2 text-right">Fuera de Umbral</th>
+              <tr className="bg-slate-50/70 text-[11px] font-semibold tracking-wider text-slate-400 uppercase">
+                <th className="px-4 py-3">Variable</th>
+                <th className="px-4 py-3">Unidad</th>
+                <th className="px-4 py-3 text-right">Lecturas</th>
+                <th className="px-4 py-3 text-right">Mínimo</th>
+                <th className="px-4 py-3 text-right">Máximo</th>
+                <th className="px-4 py-3 text-right">Promedio</th>
+                <th className="px-4 py-3 text-right">Fuera de rango</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 tabular-nums">
-              {variableStats.map((stat) => (
-                <tr key={stat.variable}>
-                  <td className="px-3 py-2 font-mono text-xs font-medium text-slate-900">
-                    {stat.variable}
+            <tbody className="divide-y divide-slate-100">
+              {variableStats.map((row) => (
+                <tr key={row.variable} className="hover:bg-slate-50/70">
+                  <td className="px-4 py-3 font-medium text-slate-900">
+                    {formatVariableLabel(row.variable)}
                   </td>
-                  <td className="px-3 py-2 text-right">{stat.total}</td>
-                  <td className="px-3 py-2 text-right">{stat.min}</td>
-                  <td className="px-3 py-2 text-right">{stat.max}</td>
-                  <td className="px-3 py-2 text-right font-medium text-slate-900">
-                    {stat.promedio}
+                  <td className="px-4 py-3 text-slate-600">{row.unidad}</td>
+                  <td className="px-4 py-3 text-right text-slate-700 tabular-nums">{row.total}</td>
+                  <td className="px-4 py-3 text-right text-slate-700 tabular-nums">{row.min}</td>
+                  <td className="px-4 py-3 text-right text-slate-700 tabular-nums">{row.max}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-slate-900 tabular-nums">
+                    {row.promedio}
                   </td>
-                  <td className="px-3 py-2 text-right">{stat.fueraUmbral}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {row.fueraUmbral > 0 ? (
+                      <span className="inline-flex rounded-full bg-[#F3E5D8] px-2.5 py-0.5 text-xs font-semibold text-[#5C3419]">
+                        {row.fueraUmbral}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">0</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </section>
+      </div>
 
-      {/* ==================== d) INDICADORES DE ALERTAS ==================== */}
-      <section
-        aria-label="Indicadores de gestión de alertas"
-        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
-      >
-        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
-          d) Indicadores de Gestión de Alertas
+      {/* 3. Indicadores de Gestión de Alertas */}
+      <div className="print-break-inside-avoid rounded-3xl border-0 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.03)]">
+        <h3 className="text-base font-semibold text-slate-900">
+          3. Indicadores de Gestión de Alertas
         </h3>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm tabular-nums">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                <th className="px-3 py-2 text-right">Total Histórico de Alertas</th>
-                <th className="px-3 py-2 text-right">Alertas Activas</th>
-                <th className="px-3 py-2 text-right">Alertas Resueltas</th>
-                <th className="px-3 py-2 text-right">Tasa Porcentual de Resolución (%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="px-3 py-2.5 text-right font-medium">{alertIndicators.total}</td>
-                <td className="px-3 py-2.5 text-right font-medium text-amber-700">
-                  {alertIndicators.activas}
-                </td>
-                <td className="px-3 py-2.5 text-right font-medium text-emerald-700">
-                  {alertIndicators.resueltas}
-                </td>
-                <td className="px-3 py-2.5 text-right font-semibold text-slate-900">
-                  {alertIndicators.tasaResolucion}%
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* ==================== e) SEGURIDAD Y AUDITORÍA ==================== */}
-      <section
-        aria-label="Resumen de seguridad y auditoría"
-        className="print-break-inside-avoid space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
-      >
-        <h3 className="flex items-center gap-2 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
-          <ShieldCheck className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
-          e) Resumen de Seguridad y Auditoría
-        </h3>
-
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                <th className="px-3 py-2">Métrica de Seguridad</th>
-                <th className="px-3 py-2">Resultado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 tabular-nums">
-              <tr>
-                <th className="px-3 py-2 font-medium text-slate-700">
-                  Total de Eventos en audit_logs
-                </th>
-                <td className="px-3 py-2 font-semibold text-slate-900">
-                  {securityBreakdown.totalEvents}
-                </td>
-              </tr>
-              <tr>
-                <th className="px-3 py-2 font-medium text-slate-700">
-                  Mediciones Verificadas Criptográficamente sin Alteraciones
-                </th>
-                <td className="px-3 py-2 font-semibold text-emerald-800">
-                  {securityBreakdown.integrityPct}% ({integrityCounts.valid} /{' '}
-                  {integrityCounts.total})
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div>
-          <h4 className="mb-2 text-sm font-semibold text-slate-800">
-            Desglose de Operaciones Críticas en audit_logs
-          </h4>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                  <th className="px-3 py-2">Acción Auditada</th>
-                  <th className="px-3 py-2 text-right">Cantidad</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 tabular-nums">
-                {securityBreakdown.counts.length === 0 ? (
-                  <tr>
-                    <td colSpan={2} className="px-3 py-4 text-center text-slate-500">
-                      Sin eventos registrados todavía.
-                    </td>
-                  </tr>
-                ) : (
-                  securityBreakdown.counts.map(([action, count]) => (
-                    <tr key={action}>
-                      <td className="px-3 py-2 font-mono text-xs text-slate-800">{action}</td>
-                      <td className="px-3 py-2 text-right font-medium text-slate-900">{count}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-2xl bg-[#F4F6F5] p-4">
+            <p className="text-xs font-medium text-slate-500">Total histórico</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums">
+              {alertSummary.total}
+            </p>
+          </div>
+          <div className="rounded-2xl bg-[#FDF7F7] p-4">
+            <p className="text-xs font-medium text-[#9E2A2B]/80">Alertas activas</p>
+            <p className="mt-1 text-2xl font-bold text-[#9E2A2B] tabular-nums">
+              {alertSummary.activas}
+            </p>
+          </div>
+          <div className="rounded-2xl bg-[#E2EFE6] p-4">
+            <p className="text-xs font-medium text-[#1B432C]/80">Alertas resueltas</p>
+            <p className="mt-1 text-2xl font-bold text-[#1B432C] tabular-nums">
+              {alertSummary.resueltas}
+            </p>
+          </div>
+          <div className="rounded-2xl bg-[#DCE7E1] p-4">
+            <p className="text-xs font-medium text-[#1D3B2C]/80">Tasa de resolución</p>
+            <p className="mt-1 text-2xl font-bold text-[#1D3B2C] tabular-nums">
+              {alertSummary.tasaResolucion}%
+            </p>
           </div>
         </div>
-      </section>
+
+        {/* Atención Prioritaria en Cultivos */}
+        {(() => {
+          const activeAlerts = alertas.filter((a) => a.estado === 'Activa');
+          if (activeAlerts.length === 0) {
+            return (
+              <div className="mt-4 flex items-center gap-2.5 rounded-2xl bg-[#E2EFE6]/60 px-4 py-3 text-xs font-medium text-[#1B432C]">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-[#00753A]" />
+                <span>
+                  Todos los cultivos operan dentro de sus rangos hídricos, nutricionales y
+                  lumínicos óptimos.
+                </span>
+              </div>
+            );
+          }
+
+          const grouped = new Map<string, { latest: Alerta; count: number; values: number[] }>();
+          for (const alerta of activeAlerts) {
+            const key = `${alerta.id_sistema}::${alerta.id_sensor}`;
+            const existing = grouped.get(key);
+            if (!existing) {
+              grouped.set(key, {
+                latest: alerta,
+                count: 1,
+                values: [alerta.valor_registrado],
+              });
+            } else {
+              existing.count += 1;
+              existing.values.push(alerta.valor_registrado);
+              if (alerta.timestamp > existing.latest.timestamp) {
+                existing.latest = alerta;
+              }
+            }
+          }
+          const groupedAlerts = Array.from(grouped.values());
+
+          return (
+            <div className="mt-5 space-y-3">
+              <h4 className="text-xs font-semibold tracking-wider text-[#9E2A2B] uppercase">
+                Atención Prioritaria en Cultivos ({groupedAlerts.length})
+              </h4>
+              <div className="space-y-2.5">
+                {groupedAlerts.map(({ latest, count, values }) => {
+                  const inst = instalaciones.find((i) => i.id_sistema === latest.id_sistema);
+                  const instName = inst?.nombre ?? latest.id_sistema;
+                  const sensorObj = sensores.find((s) => s.id_sensor === latest.id_sensor);
+                  const rawUnit =
+                    sensorObj?.unidad ??
+                    UNIDAD_POR_VARIABLE[latest.tipo_variable as TipoVariable] ??
+                    '';
+                  const unit = formatUnit(rawUnit);
+                  const exposedCrops = cultivos
+                    .filter((c) => c.id_sistema === latest.id_sistema && c.estado === 'Activo')
+                    .map((c) => c.nombre_planta);
+                  const distinctValues = new Set(values.map((v) => v.toFixed(1)));
+                  const hasMultipleValues = distinctValues.size > 1;
+                  const minVal = Math.min(...values);
+                  const maxVal = Math.max(...values);
+
+                  return (
+                    <div key={`${latest.id_sistema}-${latest.id_sensor}`} className="rounded-2xl bg-[#FDF7F7] p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <p className="text-xs font-semibold text-slate-900 tabular-nums">
+                            {latest.id_sistema} · {instName} — Sensor {latest.id_sensor}
+                          </p>
+                          {count > 1 && (
+                            <span className="rounded-full bg-[#F3E5D8] px-2 py-0.5 text-[11px] font-medium text-[#5C3419] tabular-nums">
+                              {count} incidencias activas
+                            </span>
+                          )}
+                        </div>
+                        <span className="ml-auto inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[#9E2A2B] tabular-nums">
+                          {hasMultipleValues
+                            ? `Última: ${latest.valor_registrado.toFixed(1)}`
+                            : `${formatVariableLabel(latest.tipo_variable)}: ${latest.valor_registrado.toFixed(1)}`}
+                          {unit ? ` ${unit}` : ''}
+                        </span>
+                      </div>
+                      {hasMultipleValues && (
+                        <p className="mt-1 text-[11px] font-medium text-[#9E2A2B] tabular-nums">
+                          Rango detectado: {minVal.toFixed(1)} – {maxVal.toFixed(1)}
+                          {unit ? ` ${unit}` : ''}
+                        </p>
+                      )}
+                      <p className="mt-1.5 text-xs text-slate-600">
+                        <span className="font-medium text-slate-700">Cultivos expuestos:</span>{' '}
+                        {exposedCrops.length > 0
+                          ? exposedCrops.join(', ')
+                          : 'Sin cultivos asignados'}
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-[#5C3419]">
+                        {getAgronomicRecommendation(latest)}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* 4. Control y Trazabilidad Operativa */}
+      <div className="print-break-inside-avoid rounded-3xl border-0 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.03)] print:mb-0">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-[#00753A]" />
+          <h3 className="text-base font-semibold text-slate-900">
+            4. Control y Trazabilidad Operativa
+          </h3>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl bg-[#F4F6F5] p-4">
+            <p className="text-xs font-medium text-slate-500">Eventos registrados en bitácora</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums">
+              {auditLogs.length}
+            </p>
+          </div>
+          <div className="rounded-2xl bg-[#E2EFE6] p-4">
+            <p className="text-xs font-medium text-[#1B432C]/80">Lecturas íntegras verificadas</p>
+            <p className="mt-1 text-2xl font-bold text-[#1B432C] tabular-nums">
+              {integrityRate}%
+            </p>
+          </div>
+          <div className="rounded-2xl bg-[#DCE7E1] p-4">
+            <p className="text-xs font-medium text-[#1D3B2C]/80">Movimientos operativos</p>
+            <p className="mt-1 text-2xl font-bold text-[#1D3B2C] tabular-nums">
+              {actionBreakdown.length}
+            </p>
+          </div>
+        </div>
+
+        {actionBreakdown.length > 0 && (
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {actionBreakdown.map((item) => (
+              <div
+                key={item.accion}
+                className="flex items-center justify-between rounded-2xl bg-[#F4F6F5] px-4 py-2.5 text-xs"
+              >
+                <span className="inline-flex items-center gap-2 font-medium text-slate-700">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[#00753A]" />
+                  {item.label}
+                </span>
+                <span className="font-semibold text-slate-900 tabular-nums">{item.count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

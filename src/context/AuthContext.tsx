@@ -23,6 +23,42 @@ import { USER_ROLES, type UserProfile, type UserRole } from '../types/auth';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MIN_PASSWORD_LENGTH = 8;
+const SESSION_PROFILE_KEY = 'aquaplants_auth_profile';
+
+function readCachedProfile(): UserProfile | null {
+  try {
+    if (typeof window === 'undefined' || !window.sessionStorage) return null;
+    const raw = window.sessionStorage.getItem(SESSION_PROFILE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<UserProfile>;
+    if (!parsed || typeof parsed.uid !== 'string' || typeof parsed.email !== 'string') {
+      return null;
+    }
+    const rol: UserRole = isValidRole(parsed.rol) ? parsed.rol : 'Encargado de cultivo';
+    return {
+      uid: parsed.uid,
+      nombre: sanitizeInput(String(parsed.nombre ?? 'Usuario')),
+      email: sanitizeInput(parsed.email),
+      rol,
+      fecha_creacion: String(parsed.fecha_creacion ?? ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedProfile(nextProfile: UserProfile | null): void {
+  try {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    if (nextProfile) {
+      window.sessionStorage.setItem(SESSION_PROFILE_KEY, JSON.stringify(nextProfile));
+    } else {
+      window.sessionStorage.removeItem(SESSION_PROFILE_KEY);
+    }
+  } catch {
+    // Ignorar errores de almacenamiento en modo privado
+  }
+}
 
 interface AuthContextValue {
   user: User | null;
@@ -90,7 +126,19 @@ async function fetchUserProfile(uid: string): Promise<UserProfile | null> {
   if (!db) {
     return null;
   }
-  const snap = await getDoc(doc(db, 'usuarios', uid));
+  const ref = doc(db, 'usuarios', uid);
+  let snap;
+  try {
+    snap = await getDoc(ref);
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? '';
+    if (code === 'permission-denied') {
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+      snap = await getDoc(ref);
+    } else {
+      throw err;
+    }
+  }
   if (!snap.exists()) {
     return null;
   }
@@ -107,46 +155,78 @@ async function fetchUserProfile(uid: string): Promise<UserProfile | null> {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(() => readCachedProfile());
   const [loading, setLoading] = useState<boolean>(() => Boolean(auth));
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Evita condiciones de carrera cuando `register` crea el documento en Firestore justo después de createUser
   const isRegisteringRef = useRef<boolean>(false);
+  const previousUidRef = useRef<string | null>(null);
+  const authRequestRef = useRef<number>(0);
 
   useEffect(() => {
     if (!auth) {
       return;
     }
 
+    const fallbackTimer = window.setTimeout(() => {
+      setProfileLoading(false);
+      setLoading(false);
+    }, 2500);
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
+      window.clearTimeout(fallbackTimer);
+      const currentRequest = ++authRequestRef.current;
+
       if (!firebaseUser) {
+        previousUidRef.current = null;
+        setUser(null);
         setProfile(null);
+        writeCachedProfile(null);
         setProfileLoading(false);
         setLoading(false);
         return;
       }
 
       if (isRegisteringRef.current) {
+        previousUidRef.current = firebaseUser.uid;
+        setUser(firebaseUser);
         setLoading(false);
         return;
       }
 
-      setProfileLoading(true);
+      if (firebaseUser.uid !== previousUidRef.current) {
+        previousUidRef.current = firebaseUser.uid;
+        setLoading(true);
+        setProfileLoading(true);
+        setProfile(null);
+        writeCachedProfile(null);
+      } else {
+        setProfileLoading(true);
+      }
+
+      setUser(firebaseUser);
       try {
         const fetchedProfile = await fetchUserProfile(firebaseUser.uid);
+        if (currentRequest !== authRequestRef.current) return;
         setProfile(fetchedProfile);
+        writeCachedProfile(fetchedProfile);
       } catch (error) {
+        if (currentRequest !== authRequestRef.current) return;
         setAuthError(mapFirebaseError(error));
       } finally {
-        setProfileLoading(false);
-        setLoading(false);
+        if (currentRequest === authRequestRef.current) {
+          setProfileLoading(false);
+          setLoading(false);
+        }
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      window.clearTimeout(fallbackTimer);
+      unsubscribe();
+    };
   }, []);
 
   const clearAuthError = useCallback(() => {
@@ -274,17 +354,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const currentRol = profile?.rol ?? 'Encargado de cultivo';
 
     if (currentUid) {
-      await logAuditEvent({
-        uid: currentUid,
-        email: currentEmail,
-        rol: currentRol,
-        accion: 'LOGOUT',
-        detalle: `Cierre de sesión de ${currentEmail}`,
-      });
+      try {
+        await logAuditEvent({
+          uid: currentUid,
+          email: currentEmail,
+          rol: currentRol,
+          accion: 'LOGOUT',
+          detalle: `Cierre de sesión de ${currentEmail}`,
+        });
+      } catch {
+        // No bloquear el cierre de sesión si falla el registro de auditoría
+      }
     }
 
-    await signOut(auth);
+    previousUidRef.current = null;
+    setUser(null);
     setProfile(null);
+    writeCachedProfile(null);
+    await signOut(auth);
   }, [profile]);
 
   const value = useMemo<AuthContextValue>(

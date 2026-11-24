@@ -1,28 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  BellRing,
+  Building2,
+  Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Cpu,
-  Database,
-  FileCheck2,
-  ShieldAlert,
-  ShieldCheck,
+  FilterX,
+  Loader2,
   Sprout,
-  Wifi,
-  WifiOff,
 } from 'lucide-react';
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-import { subscribeAuditLogs } from '../security/auditService';
 import {
   subscribeCultivos,
   subscribeInstalaciones,
@@ -30,15 +30,14 @@ import {
   type CrudActor,
 } from '../services/crudService';
 import {
-  calcularHashIntegridad,
   resolverAlerta,
   subscribeAlertas,
   subscribeMediciones,
 } from '../services/iotService';
-import { cargarDatosDemostracion, type SeedResult } from '../services/seedService';
-import type { AuditLogEntry, UserProfile } from '../types/auth';
+import type { UserProfile } from '../types/auth';
 import {
   TIPOS_VARIABLE,
+  UNIDAD_POR_VARIABLE,
   type Alerta,
   type Cultivo,
   type Instalacion,
@@ -46,6 +45,8 @@ import {
   type Sensor,
   type TipoVariable,
 } from '../types/domain';
+import { formatVariableLabel } from '../utils/formatters';
+import CustomSelect from './CustomSelect';
 
 interface DashboardMonitorProps {
   profile: UserProfile | null;
@@ -62,12 +63,181 @@ interface ChartPoint {
   alerta: boolean;
 }
 
+const MONTH_NAMES_ES = [
+  'Ene',
+  'Feb',
+  'Mar',
+  'Abr',
+  'May',
+  'Jun',
+  'Jul',
+  'Ago',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dic',
+] as const;
+
+function formatEditorialDateTime(timestamp: string): string {
+  const parsedDate = new Date(timestamp);
+  if (Number.isNaN(parsedDate.getTime())) return timestamp;
+  const day = String(parsedDate.getDate()).padStart(2, '0');
+  const month = MONTH_NAMES_ES[parsedDate.getMonth()];
+  const time = parsedDate.toLocaleTimeString('es-CL', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  return `${day} ${month} · ${time}`;
+}
+
+const VARIABLE_LABELS: Record<TipoVariable, string> = {
+  caudal: 'Caudal',
+  nutrientes: 'Nutrientes',
+  consumo_hidrico: 'Consumo Hídrico',
+  fotoperiodo: 'Fotoperiodo',
+};
+
+const PAGE_SIZE = 12;
+
+function formatUnit(unidad: string): string {
+  return unidad.replace(/Lmin/gi, 'L/min').replace(/\bhoras?\b/gi, 'h');
+}
+
+function formatAlertTimestamp(isoString: string): {
+  relative: string;
+  exact: string;
+} {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) {
+    return { relative: isoString, exact: isoString };
+  }
+
+  const now = new Date();
+  const diffMs = Math.max(0, now.getTime() - date.getTime());
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMin / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday =
+    date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate();
+
+  let relative: string;
+  if (diffMin < 1) {
+    relative = 'Hace menos de 1 min';
+  } else if (diffMin < 60) {
+    relative = `Hace ${diffMin} min`;
+  } else if (diffHours < 24 && !isYesterday) {
+    relative = `Hace ${diffHours} h`;
+  } else if (isYesterday) {
+    relative = 'Ayer';
+  } else {
+    relative = `Hace ${diffDays} días`;
+  }
+
+  const timePart = date.toLocaleTimeString('es-CL', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const exact = isSameDay
+    ? `Hoy, ${timePart}`
+    : `${date.toLocaleDateString('es-CL', { day: '2-digit', month: 'short' })} · ${timePart}`;
+
+  return { relative, exact };
+}
+
+function parseAlertDiagnosis(
+  alerta: Alerta,
+  sensores: Sensor[],
+): { unit: string; limitLabel: string; diagnosis: string } {
+  const sensor = sensores.find((s) => s.id_sensor === alerta.id_sensor);
+  const rawUnit =
+    sensor?.unidad ??
+    UNIDAD_POR_VARIABLE[alerta.tipo_variable as TipoVariable] ??
+    '';
+  const unit = formatUnit(rawUnit);
+
+  const match = alerta.umbral_superado.match(/(-?\d+(?:[.,]\d+)?)/);
+  const limitNum = match ? Number(match[1].replace(',', '.')) : NaN;
+  const lower = alerta.umbral_superado.toLowerCase();
+  const isMin = lower.includes('mín') || lower.includes('min');
+  const isMax = lower.includes('máx') || lower.includes('max');
+
+  if (!Number.isNaN(limitNum) && (isMin || isMax)) {
+    const unitSuffix = unit ? ` ${unit}` : '';
+    if (isMin) {
+      const diff = Math.abs(Number((limitNum - alerta.valor_registrado).toFixed(2)));
+      return {
+        unit,
+        limitLabel: `Mín. permitido: ${limitNum}${unitSuffix}`,
+        diagnosis: `Por debajo del límite inferior (-${diff}${unitSuffix})`,
+      };
+    }
+    const diff = Math.abs(Number((alerta.valor_registrado - limitNum).toFixed(2)));
+    return {
+      unit,
+      limitLabel: `Máx. permitido: ${limitNum}${unitSuffix}`,
+      diagnosis: `Por encima del límite superior (+${diff}${unitSuffix})`,
+    };
+  }
+
+  return {
+    unit,
+    limitLabel: formatUnit(alerta.umbral_superado),
+    diagnosis: formatVariableLabel(alerta.mensaje),
+  };
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload?: ChartPoint }>;
+  thresholds: { umbralMin: number; umbralMax: number; unidad: string } | null;
+}
+
+function TelemetryTooltip({ active, payload, thresholds }: CustomTooltipProps) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+
+  const inRange = thresholds
+    ? point.valor >= thresholds.umbralMin && point.valor <= thresholds.umbralMax
+    : !point.alerta;
+
+  return (
+    <div className="rounded-2xl bg-white/95 px-4 py-3 shadow-lg backdrop-blur-xs">
+      <p className="text-xs font-medium text-slate-500 tabular-nums">
+        {point.hora} · {point.id_sensor}
+      </p>
+      <p className="mt-1 text-lg font-bold text-slate-900 tabular-nums">
+        {point.valor}{' '}
+        <span className="text-xs font-semibold text-slate-500">
+          {formatUnit(point.unidad)}
+        </span>
+      </p>
+      <span
+        className={`mt-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+          inRange ? 'bg-[#E2EFE6] text-[#1B432C]' : 'bg-[#F3E5D8] text-[#5C3419]'
+        }`}
+      >
+        {inRange ? 'Dentro de rango' : 'Fuera de rango'}
+      </span>
+    </div>
+  );
+}
+
 export default function DashboardMonitor({
   profile,
   userUid,
   userEmail,
 }: DashboardMonitorProps) {
-  const isAdmin = profile?.rol === 'Administrador';
   const actor: CrudActor = {
     uid: userUid,
     email: profile?.email ?? userEmail,
@@ -82,31 +252,44 @@ export default function DashboardMonitor({
   const [sensores, setSensores] = useState<Sensor[]>([]);
   const [mediciones, setMediciones] = useState<Medicion[]>([]);
   const [alertas, setAlertas] = useState<Alerta[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{
     type: 'error' | 'ok';
     text: string;
   } | null>(null);
 
-  // Estado carga de datos semilla
-  const [seeding, setSeeding] = useState(false);
-
   // Filtros interactivos de histórico y gráfico
   const [filterSistema, setFilterSistema] = useState<string>('Todas');
   const [filterVariable, setFilterVariable] = useState<string>('Todas');
   const [filterSensor, setFilterSensor] = useState<string>('Todos');
+  const [chartVariableTab, setChartVariableTab] = useState<TipoVariable>('caudal');
+  const [measurementsScope, setMeasurementsScope] = useState<'all' | 'out_of_range'>('all');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [confirmResolveAll, setConfirmResolveAll] = useState(false);
+  const [isResolvingAll, setIsResolvingAll] = useState(false);
 
-  // Mapa de verificación criptográfica SHA-256 por medición
-  const [integrityStatusMap, setIntegrityStatusMap] = useState<Record<string, boolean>>({});
+  // Refs para navegación rápida desde las tarjetas KPI
+  const telemetryRef = useRef<HTMLDivElement | null>(null);
+  const alertsRef = useRef<HTMLElement | null>(null);
+  const measurementsRef = useRef<HTMLElement | null>(null);
+  const resolveAllRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const unsubInst = subscribeInstalaciones(setInstalaciones, setStreamError);
+    const unsubInst = subscribeInstalaciones(
+      (items) => {
+        setInstalaciones(items);
+        setInitialLoading(false);
+      },
+      (err) => {
+        setStreamError(err);
+        setInitialLoading(false);
+      },
+    );
     const unsubCult = subscribeCultivos(setCultivos, setStreamError);
     const unsubSen = subscribeSensores(setSensores, setStreamError);
     const unsubMed = subscribeMediciones(null, setMediciones, setStreamError);
     const unsubAle = subscribeAlertas(null, setAlertas, setStreamError);
-    const unsubAud = subscribeAuditLogs(null, setAuditLogs, setStreamError);
 
     return () => {
       unsubInst();
@@ -114,43 +297,44 @@ export default function DashboardMonitor({
       unsubSen();
       unsubMed();
       unsubAle();
-      unsubAud();
     };
   }, []);
 
-  // Recalcula SHA-256 en el navegador para cada medición leída desde Firestore
+  // Cierre inteligente del popover "Resolver todas" (clic fuera, Escape o 6000ms)
   useEffect(() => {
-    let cancelled = false;
+    if (!confirmResolveAll) return;
 
-    async function verifyAllMeasurements() {
-      const results = await Promise.all(
-        mediciones.map(async (m): Promise<[string, boolean]> => {
-          const recomputed = await calcularHashIntegridad(
-            m.id_sistema,
-            m.id_dispositivo,
-            m.id_sensor,
-            m.valor,
-            m.timestamp,
-          );
-          return [m.id, recomputed === m.hash_integridad];
-        }),
-      );
-
-      if (!cancelled) {
-        setIntegrityStatusMap(Object.fromEntries(results));
+    const handleMouseDown = (event: MouseEvent) => {
+      if (
+        resolveAllRef.current &&
+        !resolveAllRef.current.contains(event.target as Node)
+      ) {
+        setConfirmResolveAll(false);
       }
-    }
+    };
 
-    void verifyAllMeasurements();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setConfirmResolveAll(false);
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      setConfirmResolveAll(false);
+    }, 6000);
+
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [mediciones]);
+  }, [confirmResolveAll]);
 
   const resumen = useMemo(() => {
     const enLinea = instalaciones.filter((i) => i.estado_conexion === 'En línea').length;
-    const desconectadas = instalaciones.filter((i) => i.estado_conexion === 'Desconectado').length;
     const cultivosActivos = cultivos.filter((c) => c.estado === 'Activo').length;
     const sensoresActivos = sensores.filter((s) => s.estado === 'Activo').length;
     const alertasActivas = alertas.filter((a) => a.estado === 'Activa');
@@ -158,13 +342,11 @@ export default function DashboardMonitor({
     return {
       totalInstalaciones: instalaciones.length,
       enLinea,
-      desconectadas,
       cultivosActivos,
       sensoresActivos,
       alertasActivas,
-      totalAuditLogs: auditLogs.length,
     };
-  }, [instalaciones, cultivos, sensores, alertas, auditLogs]);
+  }, [instalaciones, cultivos, sensores, alertas]);
 
   const availableSensorsForFilter = useMemo(() => {
     return sensores.filter((s) => {
@@ -181,6 +363,11 @@ export default function DashboardMonitor({
     ? filterSensor
     : 'Todos';
 
+  const hasActiveFilters =
+    filterSistema !== 'Todas' ||
+    filterVariable !== 'Todas' ||
+    effectiveSensorFilter !== 'Todos';
+
   const filteredMediciones = useMemo(() => {
     return mediciones.filter((m) => {
       const matchesSistema = filterSistema === 'Todas' || m.id_sistema === filterSistema;
@@ -192,10 +379,30 @@ export default function DashboardMonitor({
     });
   }, [mediciones, filterSistema, filterVariable, effectiveSensorFilter]);
 
-  // Determina umbrales de referencia para el gráfico cuando se filtra por sensor o variable específica
+  // Variable activa para el gráfico (garantiza una sola unidad en el eje Y y preselecciona la primera disponible)
+  const availableChartVariables = useMemo(() => {
+    const present = new Set(filteredMediciones.map((m) => m.tipo_variable));
+    return TIPOS_VARIABLE.filter((v) => present.has(v));
+  }, [filteredMediciones]);
+
+  const effectiveChartVariable: TipoVariable =
+    filterVariable !== 'Todas'
+      ? (filterVariable as TipoVariable)
+      : availableChartVariables.includes(chartVariableTab)
+        ? chartVariableTab
+        : (availableChartVariables[0] ?? chartVariableTab);
+
+  const chartMediciones = useMemo(() => {
+    return filteredMediciones.filter((m) => m.tipo_variable === effectiveChartVariable);
+  }, [filteredMediciones, effectiveChartVariable]);
+
+  // Determina umbrales de referencia para el gráfico según sensor o variable activa
   const referenceThresholds = useMemo(() => {
     if (effectiveSensorFilter !== 'Todos') {
-      const exactSensor = sensores.find((s) => s.id_sensor === effectiveSensorFilter);
+      const exactSensor = sensores.find(
+        (s) =>
+          s.id_sensor === effectiveSensorFilter && s.tipo_variable === effectiveChartVariable,
+      );
       if (exactSensor) {
         return {
           umbralMin: exactSensor.umbral_min,
@@ -205,29 +412,36 @@ export default function DashboardMonitor({
       }
     }
 
-    if (filterVariable !== 'Todas') {
-      const matchingSensors = availableSensorsForFilter;
-      if (matchingSensors.length > 0) {
-        return {
-          umbralMin: matchingSensors[0].umbral_min,
-          umbralMax: matchingSensors[0].umbral_max,
-          unidad: matchingSensors[0].unidad,
-        };
-      }
+    const matchingSensor = sensores.find(
+      (s) =>
+        s.tipo_variable === effectiveChartVariable &&
+        (filterSistema === 'Todas' || s.id_sistema === filterSistema),
+    );
+    if (matchingSensor) {
+      return {
+        umbralMin: matchingSensor.umbral_min,
+        umbralMax: matchingSensor.umbral_max,
+        unidad: matchingSensor.unidad,
+      };
     }
 
     return null;
-  }, [effectiveSensorFilter, filterVariable, sensores, availableSensorsForFilter]);
+  }, [effectiveSensorFilter, effectiveChartVariable, filterSistema, sensores]);
 
   // Orden cronológico ascendente para el LineChart
   const chartData = useMemo<ChartPoint[]>(() => {
-    return [...filteredMediciones]
+    return [...chartMediciones]
       .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
       .map((m) => {
         const date = new Date(m.timestamp);
         const hora = Number.isNaN(date.getTime())
-          ? m.timestamp.slice(11, 16)
-          : date.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+          ? m.timestamp.slice(11, 19)
+          : date.toLocaleTimeString('es-CL', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: false,
+            });
         return {
           hora,
           timestamp: m.timestamp,
@@ -237,543 +451,782 @@ export default function DashboardMonitor({
           alerta: m.alerta,
         };
       });
-  }, [filteredMediciones]);
+  }, [chartMediciones]);
+
+  const scopedMediciones = useMemo(() => {
+    if (measurementsScope === 'all') return filteredMediciones;
+    return filteredMediciones.filter((m) => {
+      const sensor = sensores.find((s) => s.id_sensor === m.id_sensor);
+      if (sensor) {
+        return m.valor < sensor.umbral_min || m.valor > sensor.umbral_max;
+      }
+      return m.alerta;
+    });
+  }, [filteredMediciones, measurementsScope, sensores]);
+
+  const totalPages = Math.max(1, Math.ceil(scopedMediciones.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedMediciones = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return scopedMediciones.slice(start, start + PAGE_SIZE);
+  }, [scopedMediciones, safePage]);
 
   async function handleResolveAlert(alerta: Alerta) {
     setActionFeedback(null);
+    if (!canResolveAlerts) {
+      setActionFeedback({
+        type: 'error',
+        text: 'Tu perfil no tiene permisos para resolver alertas.',
+      });
+      return;
+    }
+
     try {
       await resolverAlerta(alerta.id, alerta.id_sensor, actor);
       setActionFeedback({
         type: 'ok',
-        text: `Alerta ${alerta.id} (sensor ${alerta.id_sensor}) resuelta y auditada en audit_logs.`,
+        text: `Alerta ${alerta.id_sensor} (${alerta.id_sistema}) marcada como Resuelta.`,
       });
     } catch (error) {
       setActionFeedback({
         type: 'error',
-        text: error instanceof Error ? error.message : 'Error al resolver alerta.',
+        text: error instanceof Error ? error.message : 'Error resolviendo alerta.',
       });
     }
   }
 
-  async function handleSeedDemoData() {
+  async function handleResolveAllAlerts() {
     setActionFeedback(null);
-    setSeeding(true);
+    if (!canResolveAlerts || resumen.alertasActivas.length === 0) return;
+
+    setIsResolvingAll(true);
     try {
-      const res: SeedResult = await cargarDatosDemostracion(actor);
+      await Promise.all(
+        resumen.alertasActivas.map((a) => resolverAlerta(a.id, a.id_sensor, actor)),
+      );
       setActionFeedback({
         type: 'ok',
-        text: `Datos semilla cargados: ${res.instalacionesCreadas} instalaciones nuevas, ${res.cultivosCreados} cultivos nuevos, ${res.sensoresCreados} sensores nuevos y ${res.medicionesCreadas} mediciones (${res.alertasGeneradas} alertas).`,
+        text: `${resumen.alertasActivas.length} alertas marcadas como Resueltas.`,
       });
+      setConfirmResolveAll(false);
     } catch (error) {
       setActionFeedback({
         type: 'error',
-        text: error instanceof Error ? error.message : 'Error al cargar datos de demostración.',
+        text: error instanceof Error ? error.message : 'Error resolviendo alertas.',
       });
     } finally {
-      setSeeding(false);
+      setIsResolvingAll(false);
     }
+  }
+
+  function handleClearFilters() {
+    setFilterSistema('Todas');
+    setFilterVariable('Todas');
+    setFilterSensor('Todos');
+    setCurrentPage(1);
   }
 
   return (
-    <section id="dashboard-monitoreo" className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-            Dashboard Operativo y Verificación de Integridad
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Monitoreo en tiempo real de instalaciones, alertas activas y validación SHA-256 de
-            telemetría
-          </p>
-        </div>
-
-        {isAdmin && (
-          <button
-            type="button"
-            onClick={() => void handleSeedDemoData()}
-            disabled={seeding}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Database className="h-4 w-4" strokeWidth={1.75} />
-            {seeding
-              ? 'Cargando datos semilla...'
-              : 'Cargar Datos de Demostración AquaPlants'}
-          </button>
-        )}
+    <section className="space-y-6">
+      {/* Encabezado de vista */}
+      <div>
+        <h2 className="text-xl font-bold tracking-tight text-slate-900">
+          Dashboard Operativo en Tiempo Real
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Supervisión en tiempo real del estado hídrico, nutrientes y alertas de tus cultivos
+        </p>
       </div>
 
       {streamError && (
-        <div
+        <p
           role="alert"
-          className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
         >
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-600" strokeWidth={1.75} />
-          <span>{streamError}</span>
-        </div>
+          Error de sincronización en tiempo real: {streamError}
+        </p>
       )}
 
       {actionFeedback && (
-        <div
+        <p
           role={actionFeedback.type === 'error' ? 'alert' : 'status'}
-          className={`flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm ${
+          className={`rounded-xl border px-4 py-3 text-sm ${
             actionFeedback.type === 'error'
               ? 'border-red-200 bg-red-50 text-red-800'
               : 'border-emerald-200 bg-emerald-50 text-emerald-900'
           }`}
         >
-          {actionFeedback.type === 'error' ? (
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" strokeWidth={1.75} />
-          ) : (
-            <CheckCircle2
-              className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700"
-              strokeWidth={1.75}
+          {actionFeedback.text}
+        </p>
+      )}
+
+      {/* 1. GRILLA DE 4 KPIs EN SUPERFICIES TONALES PASTEL */}
+      {initialLoading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:gap-6 xl:grid-cols-4">
+          {[1, 2, 3, 4].map((idx) => (
+            <div
+              key={idx}
+              className="h-36 animate-pulse rounded-3xl bg-slate-200/70 p-5"
             />
-          )}
-          <span>{actionFeedback.text}</span>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:gap-6 xl:grid-cols-4">
+          {/* KPI 1: Instalaciones Activas */}
+          <button
+            type="button"
+            onClick={() => telemetryRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            className="w-full cursor-pointer rounded-3xl bg-[#DCE7E1] p-5 text-left text-[#1D3B2C] transition-transform duration-200 ease-out hover:-translate-y-1 active:translate-y-0"
+          >
+            <div className="mb-6 flex items-center justify-between">
+              <span className="rounded-full bg-[#C4D6CC] px-3 py-1 text-xs font-semibold tracking-tight text-[#1D3B2C]">
+                En línea
+              </span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#C4D6CC] text-[#1D3B2C]">
+                <Building2 className="h-4 w-4" strokeWidth={2} />
+              </span>
+            </div>
+            <p className="text-base font-semibold tracking-tight">Instalaciones Activas</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums">
+              {resumen.enLinea}{' '}
+              <span className="text-base font-semibold text-[#1D3B2C]/75">
+                / {resumen.totalInstalaciones}
+              </span>
+            </p>
+          </button>
+
+          {/* KPI 2: Cultivos Activos */}
+          <button
+            type="button"
+            onClick={() => measurementsRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            className="w-full cursor-pointer rounded-3xl bg-[#E2EFE6] p-5 text-left text-[#1B432C] transition-transform duration-200 ease-out hover:-translate-y-1 active:translate-y-0"
+          >
+            <div className="mb-6 flex items-center justify-between">
+              <span className="rounded-full bg-[#C9E0D1] px-3 py-1 text-xs font-semibold tracking-tight text-[#1B432C]">
+                En producción
+              </span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#C9E0D1] text-[#1B432C]">
+                <Sprout className="h-4 w-4" strokeWidth={2} />
+              </span>
+            </div>
+            <p className="text-base font-semibold tracking-tight">Cultivos Activos</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums">
+              {resumen.cultivosActivos}{' '}
+              <span className="text-sm font-medium text-[#1B432C]/75">
+                {resumen.cultivosActivos === 1 ? 'cultivo' : 'cultivos'}
+              </span>
+            </p>
+          </button>
+
+          {/* KPI 3: Sensores Monitoreados */}
+          <button
+            type="button"
+            onClick={() => telemetryRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            className="w-full cursor-pointer rounded-3xl bg-[#E7ECE0] p-5 text-left text-[#2F3E22] transition-transform duration-200 ease-out hover:-translate-y-1 active:translate-y-0"
+          >
+            <div className="mb-6 flex items-center justify-between">
+              <span className="rounded-full bg-[#D3DBC7] px-3 py-1 text-xs font-semibold tracking-tight text-[#2F3E22]">
+                Operativos
+              </span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#D3DBC7] text-[#2F3E22]">
+                <Cpu className="h-4 w-4" strokeWidth={2} />
+              </span>
+            </div>
+            <p className="text-base font-semibold tracking-tight">Sensores Monitoreados</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums">
+              {resumen.sensoresActivos}{' '}
+              <span className="text-sm font-medium text-[#2F3E22]/75">
+                {resumen.sensoresActivos === 1 ? 'sensor' : 'sensores'}
+              </span>
+            </p>
+          </button>
+
+          {/* KPI 4: Alertas Activas */}
+          <button
+            type="button"
+            onClick={() => alertsRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            className={`w-full cursor-pointer rounded-3xl p-5 text-left transition-transform duration-200 ease-out hover:-translate-y-1 active:translate-y-0 ${
+              resumen.alertasActivas.length > 0
+                ? 'bg-[#F3E5D8] text-[#5C3419]'
+                : 'bg-[#DFF0EA] text-[#164234]'
+            }`}
+          >
+            <div className="mb-6 flex items-center justify-between">
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-semibold tracking-tight ${
+                  resumen.alertasActivas.length > 0
+                    ? 'bg-[#E6CEB8] text-[#5C3419]'
+                    : 'bg-[#C5E2D8] text-[#164234]'
+                }`}
+              >
+                {resumen.alertasActivas.length > 0 ? 'Atención' : 'Sin alertas'}
+              </span>
+              <span
+                className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                  resumen.alertasActivas.length > 0
+                    ? 'bg-[#E6CEB8] text-[#5C3419]'
+                    : 'bg-[#C5E2D8] text-[#164234]'
+                }`}
+              >
+                {resumen.alertasActivas.length > 0 ? (
+                  <BellRing className="h-4 w-4" strokeWidth={2} />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" strokeWidth={2} />
+                )}
+              </span>
+            </div>
+            <p className="text-base font-semibold tracking-tight">Alertas Activas</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums">
+              {resumen.alertasActivas.length}{' '}
+              <span
+                className={`text-sm font-medium ${
+                  resumen.alertasActivas.length > 0
+                    ? 'text-[#5C3419]/75'
+                    : 'text-[#164234]/75'
+                }`}
+              >
+                {resumen.alertasActivas.length === 1 ? 'pendiente' : 'pendientes'}
+              </span>
+            </p>
+          </button>
         </div>
       )}
 
-      {/* ==================== KPIs EJECUTIVOS ==================== */}
-      <section id="dash-resumen" aria-label="Resumen Ejecutivo en Tiempo Real">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-medium">Instalaciones</span>
-              <Wifi className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
-            </div>
-            <p className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
-              {resumen.totalInstalaciones}
-            </p>
-            <p className="mt-1 flex items-center gap-2 text-xs text-slate-600 tabular-nums">
-              <span className="inline-flex items-center gap-1 text-emerald-700">
-                <Wifi className="h-3.5 w-3.5" strokeWidth={1.75} />
-                {resumen.enLinea} en línea
-              </span>
-              <span className="inline-flex items-center gap-1 text-slate-500">
-                <WifiOff className="h-3.5 w-3.5" strokeWidth={1.75} />
-                {resumen.desconectadas} desc.
-              </span>
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-medium">Cultivos Activos</span>
-              <Sprout className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
-            </div>
-            <p className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
-              {resumen.cultivosActivos}
-            </p>
-            <p className="mt-1 text-xs text-slate-500 tabular-nums">
-              De {cultivos.length} cultivos registrados
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-medium">Sensores Activos</span>
-              <Cpu className="h-4 w-4 text-slate-600" strokeWidth={1.75} />
-            </div>
-            <p className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
-              {resumen.sensoresActivos}
-            </p>
-            <p className="mt-1 text-xs text-slate-500 tabular-nums">
-              De {sensores.length} sensores configurados
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-medium">Alertas Activas</span>
-              <AlertTriangle
-                className={`h-4 w-4 ${
-                  resumen.alertasActivas.length > 0 ? 'text-amber-600' : 'text-emerald-600'
-                }`}
-                strokeWidth={1.75}
-              />
-            </div>
-            <p
-              className={`mt-2 text-2xl font-semibold tabular-nums ${
-                resumen.alertasActivas.length > 0 ? 'text-amber-700' : 'text-slate-900'
-              }`}
-            >
-              {resumen.alertasActivas.length}
-            </p>
-            <p className="mt-1 text-xs text-slate-500 tabular-nums">
-              Pendientes de {alertas.length} históricas
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-medium">Eventos de Auditoría</span>
-              <FileCheck2 className="h-4 w-4 text-slate-600" strokeWidth={1.75} />
-            </div>
-            <p className="mt-2 text-2xl font-semibold text-slate-900 tabular-nums">
-              {resumen.totalAuditLogs}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">Trazabilidad inmutable SHA-256</p>
-          </div>
-        </div>
-      </section>
-
-      {/* ==================== GRÁFICO HISTÓRICO INTERACTIVO ==================== */}
-      <section
-        aria-label="Evolución Histórica de Telemetría"
-        className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+      {/* 2. BARRA DE FILTROS RÁPIDOS PERSISTENTE (STICKY FILTER BAR) */}
+      <div
+        ref={telemetryRef}
+        className="sticky top-3 z-20 rounded-3xl bg-white/95 p-4 shadow-[0_2px_12px_rgba(15,23,42,0.03)] backdrop-blur-md"
       >
-        <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-              <Activity className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
-              Evolución Temporal de Mediciones
-            </h3>
-            <p className="mt-1 text-xs text-slate-500">
-              {referenceThresholds
-                ? `Líneas de referencia activas: Mín ${referenceThresholds.umbralMin} ${referenceThresholds.unidad} / Máx ${referenceThresholds.umbralMax} ${referenceThresholds.unidad}`
-                : 'Filtra por un sensor o variable específica para visualizar las líneas de umbral mínimo y máximo'}
-            </p>
-          </div>
-
-          <form
-            onSubmit={(e) => e.preventDefault()}
-            className="grid grid-cols-1 gap-3 sm:grid-cols-3"
-          >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label
                 htmlFor="dash-filter-sistema"
-                className="mb-1 block text-xs font-medium text-slate-700"
+                className="mb-1.5 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase"
               >
                 Instalación
               </label>
-              <select
+              <CustomSelect
                 id="dash-filter-sistema"
                 value={filterSistema}
-                onChange={(e) => {
-                  setFilterSistema(e.target.value);
-                  setFilterSensor('Todos');
+                onChange={(val) => {
+                  setFilterSistema(val);
+                  setCurrentPage(1);
                 }}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/20"
-              >
-                <option value="Todas">Todas las instalaciones</option>
-                {instalaciones.map((inst) => (
-                  <option key={inst.id} value={inst.id_sistema}>
-                    {inst.id_sistema} — {inst.nombre}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: 'Todas', label: 'Todas las instalaciones' },
+                  ...instalaciones.map((inst) => ({
+                    value: inst.id_sistema,
+                    code: inst.id_sistema,
+                    label: inst.nombre,
+                  })),
+                ]}
+              />
             </div>
 
             <div>
               <label
                 htmlFor="dash-filter-variable"
-                className="mb-1 block text-xs font-medium text-slate-700"
+                className="mb-1.5 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase"
               >
-                Variable
+                Variable monitoreada
               </label>
-              <select
+              <CustomSelect
                 id="dash-filter-variable"
                 value={filterVariable}
-                onChange={(e) => {
-                  setFilterVariable(e.target.value);
-                  setFilterSensor('Todos');
+                onChange={(val) => {
+                  setFilterVariable(val);
+                  setCurrentPage(1);
                 }}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/20"
-              >
-                <option value="Todas">Todas las variables</option>
-                {TIPOS_VARIABLE.map((tipo) => (
-                  <option key={tipo} value={tipo}>
-                    {tipo}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: 'Todas', label: 'Todas las variables' },
+                  ...TIPOS_VARIABLE.map((v) => ({
+                    value: v,
+                    label: formatVariableLabel(v),
+                  })),
+                ]}
+              />
             </div>
 
             <div>
               <label
                 htmlFor="dash-filter-sensor"
-                className="mb-1 block text-xs font-medium text-slate-700"
+                className="mb-1.5 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase"
               >
                 Sensor
               </label>
-              <select
+              <CustomSelect
                 id="dash-filter-sensor"
                 value={effectiveSensorFilter}
-                onChange={(e) => setFilterSensor(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/20"
-              >
-                <option value="Todos">Todos los sensores</option>
-                {availableSensorsForFilter.map((sen) => (
-                  <option key={sen.id} value={sen.id_sensor}>
-                    {sen.id_sensor} ({sen.tipo_variable})
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => {
+                  setFilterSensor(val);
+                  setCurrentPage(1);
+                }}
+                options={[
+                  { value: 'Todos', label: 'Todos los sensores' },
+                  ...availableSensorsForFilter.map((sen) => ({
+                    value: sen.id_sensor,
+                    code: sen.id_sensor,
+                    label: formatVariableLabel(sen.tipo_variable),
+                  })),
+                ]}
+              />
             </div>
-          </form>
+          </div>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="inline-flex items-center gap-1.5 self-end rounded-xl bg-[#F4F6F5] px-3.5 py-2.5 text-xs font-medium text-slate-700 transition-colors hover:bg-[#ECF0EE] lg:self-end"
+            >
+              <FilterX className="h-3.5 w-3.5" strokeWidth={1.75} />
+              Limpiar
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 3. GRÁFICO DE LÍNEAS EN RECHARTS CON IDENTIDAD AQUAPLANTS (UNA SOLA UNIDAD POR EJE Y) */}
+      <section className="rounded-3xl bg-white p-5 shadow-[0_2px_12px_rgba(15,23,42,0.03)]">
+        <div className="mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-[#00753A]" strokeWidth={1.75} />
+            <h3 className="text-base font-semibold text-slate-900">
+              Tendencia de Telemetría IoT
+            </h3>
+            {referenceThresholds && (
+              <span className="rounded-full bg-[#DCE7E1]/70 px-2.5 py-0.5 text-xs font-medium text-[#1D3B2C]">
+                {formatUnit(referenceThresholds.unidad)}
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div
+              role="tablist"
+              aria-label="Variable del gráfico"
+              className="inline-flex flex-wrap gap-1 rounded-xl bg-slate-100/80 p-1"
+            >
+              {TIPOS_VARIABLE.map((v) => {
+                const active = effectiveChartVariable === v;
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => {
+                      setChartVariableTab(v);
+                      setFilterVariable(v);
+                      setCurrentPage(1);
+                    }}
+                    className={`rounded-lg px-2.5 py-1 text-xs transition-colors ${
+                      active
+                        ? 'bg-[#00753A] font-semibold text-white shadow-xs'
+                        : 'font-medium text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {VARIABLE_LABELS[v]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {referenceThresholds && (
+              <div className="flex flex-wrap items-center gap-2 text-xs tabular-nums">
+                <span className="rounded-full bg-[#DCE7E1]/70 px-2.5 py-0.5 font-medium text-[#1D3B2C]">
+                  Mín: {referenceThresholds.umbralMin} {formatUnit(referenceThresholds.unidad)}
+                </span>
+                <span className="rounded-full bg-[#DCE7E1]/70 px-2.5 py-0.5 font-medium text-[#1D3B2C]">
+                  Máx: {referenceThresholds.umbralMax} {formatUnit(referenceThresholds.unidad)}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="mt-4 h-72 w-full">
-          {chartData.length === 0 ? (
-            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-              No hay mediciones disponibles para los filtros seleccionados.
-            </div>
-          ) : (
+        {chartData.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 py-12 text-center">
+            <p className="text-sm font-medium text-slate-700">
+              No hay mediciones de {VARIABLE_LABELS[effectiveChartVariable]} para los filtros seleccionados.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Genera nueva telemetría desde la pestaña Simulador IoT o selecciona otra variable.
+            </p>
+          </div>
+        ) : (
+          <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 12, right: 20, left: 4, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <AreaChart
+                key={effectiveChartVariable}
+                data={chartData}
+                margin={{ top: 10, right: 16, left: 0, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="aquaplantsAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#00753A" stopOpacity={0.18} />
+                    <stop offset="100%" stopColor="#00753A" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} stroke="#F1F5F9" />
                 <XAxis
                   dataKey="hora"
-                  tick={{ fill: '#64748b', fontSize: 12 }}
-                  axisLine={{ stroke: '#cbd5e1' }}
+                  minTickGap={42}
+                  dy={8}
+                  tick={{ fill: '#64748B', fontSize: 12 }}
+                  axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fill: '#64748b', fontSize: 12 }}
-                  axisLine={{ stroke: '#cbd5e1' }}
+                  dx={-6}
+                  tick={{ fill: '#64748B', fontSize: 12 }}
+                  axisLine={false}
                   tickLine={false}
                 />
+                {referenceThresholds && (
+                  <ReferenceArea
+                    y1={referenceThresholds.umbralMin}
+                    y2={referenceThresholds.umbralMax}
+                    fill="#DCE7E1"
+                    fillOpacity={0.42}
+                    strokeOpacity={0}
+                  />
+                )}
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#ffffff',
-                    borderColor: '#e2e8f0',
-                    borderRadius: '0.5rem',
-                    fontSize: '12px',
-                    color: '#0f172a',
-                  }}
-                  formatter={(value) => [`${String(value ?? '')}`, 'Valor registrado']}
-                  labelFormatter={(label, payload) => {
-                    const first = payload?.[0]?.payload as ChartPoint | undefined;
-                    return first
-                      ? `${first.id_sensor} · ${new Date(first.timestamp).toLocaleString('es-CL')}`
-                      : String(label);
-                  }}
+                  content={<TelemetryTooltip thresholds={referenceThresholds} />}
                 />
-                {referenceThresholds && (
-                  <ReferenceLine
-                    y={referenceThresholds.umbralMax}
-                    stroke="#dc2626"
-                    strokeDasharray="4 4"
-                    label={{
-                      value: `Máx ${referenceThresholds.umbralMax}`,
-                      position: 'insideTopRight',
-                      fill: '#dc2626',
-                      fontSize: 11,
-                    }}
-                  />
-                )}
-                {referenceThresholds && (
-                  <ReferenceLine
-                    y={referenceThresholds.umbralMin}
-                    stroke="#d97706"
-                    strokeDasharray="4 4"
-                    label={{
-                      value: `Mín ${referenceThresholds.umbralMin}`,
-                      position: 'insideBottomRight',
-                      fill: '#d97706',
-                      fontSize: 11,
-                    }}
-                  />
-                )}
-                <Line
+                <Area
                   type="monotone"
                   dataKey="valor"
-                  stroke="#059669"
-                  strokeWidth={2}
-                  dot={{ r: 3, fill: '#059669', strokeWidth: 0 }}
-                  activeDot={{ r: 5, fill: '#047857' }}
+                  stroke="#00753A"
+                  strokeWidth={2.5}
+                  fill="url(#aquaplantsAreaGrad)"
+                  dot={false}
+                  activeDot={{ r: 5, fill: '#00753A', stroke: '#FFFFFF', strokeWidth: 2 }}
                 />
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
-      {/* ==================== GESTIÓN DE ALERTAS ACTIVAS ==================== */}
+      {/* 4. PANEL DE ALERTAS ACTIVAS CON ACCIÓN DIRECTA Y ROL RBAC */}
       <section
-        id="dash-alertas-activas"
-        className="rounded-xl border border-slate-200 bg-white shadow-xs"
+        ref={alertsRef}
+        className="rounded-3xl bg-[#FDF7F7] p-6 shadow-[0_2px_12px_rgba(185,28,28,0.03)]"
       >
-        <div className="flex flex-col gap-1 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-[#B9382C]" strokeWidth={1.75} />
             <h3 className="text-base font-semibold text-slate-900">
-              Panel de Gestión de Alertas Activas ({resumen.alertasActivas.length})
+              Alertas Activas ({resumen.alertasActivas.length})
             </h3>
-            <p className="text-xs text-slate-500">
-              Alertas pendientes generadas por mediciones fuera de umbral
-            </p>
           </div>
-          {!canResolveAlerts && (
-            <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
-              Rol {profile?.rol ?? 'Sin perfil'}: solo lectura
-            </span>
-          )}
+
+          <div className="flex items-center gap-2">
+            {resumen.alertasActivas.length > 1 && canResolveAlerts && (
+              <div ref={resolveAllRef} className="relative inline-block">
+                {confirmResolveAll && (
+                  <div
+                    role="dialog"
+                    aria-label="Confirmar resolución masiva de alertas"
+                    className="auth-stagger-rise absolute right-0 bottom-full z-30 mb-2.5 w-64 origin-bottom-right rounded-2xl bg-white p-3.5 shadow-xl transition-all duration-200 ease-out"
+                  >
+                    <p className="mb-2.5 text-xs leading-snug font-semibold text-slate-800">
+                      ¿Seguro de resolver las {resumen.alertasActivas.length} alertas?
+                    </p>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        disabled={isResolvingAll}
+                        onClick={() => setConfirmResolveAll(false)}
+                        className="rounded-xl px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isResolvingAll}
+                        onClick={() => void handleResolveAllAlerts()}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-[#00753A] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#00612F] disabled:opacity-60"
+                      >
+                        {isResolvingAll && (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        )}
+                        {isResolvingAll ? 'Resolviendo...' : 'Sí, resolver'}
+                      </button>
+                    </div>
+                    <span
+                      aria-hidden="true"
+                      className="absolute -bottom-1.5 right-6 h-3 w-3 rotate-45 bg-white"
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  disabled={isResolvingAll}
+                  aria-expanded={confirmResolveAll}
+                  onClick={() => setConfirmResolveAll((prev) => !prev)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                    confirmResolveAll
+                      ? 'bg-[#F5DCDC] text-[#8A1F1F]'
+                      : 'text-[#9E2A2B] hover:bg-[#F9EAEA]'
+                  }`}
+                >
+                  Resolver todas
+                </button>
+              </div>
+            )}
+            {!canResolveAlerts && (
+              <span className="rounded-full bg-[#F9EAEA] px-2.5 py-1 text-xs font-medium text-[#9E2A2B]">
+                Solo lectura ({profile?.rol ?? 'Supervisor'})
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                <th className="px-4 py-3">Nivel</th>
-                <th className="px-4 py-3">Sistema</th>
-                <th className="px-4 py-3">Sensor</th>
-                <th className="px-4 py-3 text-right">Valor</th>
-                <th className="px-4 py-3">Umbral Superado</th>
-                <th className="px-4 py-3">Mensaje</th>
-                <th className="px-4 py-3">Fecha / Hora</th>
-                {canResolveAlerts && <th className="px-4 py-3 text-right">Acción</th>}
+              <tr className="border-b border-[#F5E2E2] text-xs font-semibold tracking-wider text-[#8C3B36]/80 uppercase">
+                <th className="px-3 py-2.5">Severidad</th>
+                <th className="px-3 py-2.5">Instalación</th>
+                <th className="px-3 py-2.5">Sensor / Variable</th>
+                <th className="px-3 py-2.5">Valor / Umbral</th>
+                <th className="px-3 py-2.5">Diagnóstico</th>
+                <th className="px-3 py-2.5">Fecha / Hora</th>
+                <th className="px-3 py-2.5 text-right">Acción</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-[#F5E2E2]">
               {resumen.alertasActivas.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={canResolveAlerts ? 8 : 7}
-                    className="px-4 py-8 text-center text-sm text-slate-500"
-                  >
-                    No existen alertas activas pendientes de atención.
+                  <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-600">
+                    <span className="inline-flex items-center gap-1.5 font-medium text-[#00753A]">
+                      <CheckCircle2 className="h-4 w-4" />
+                      No hay alertas activas pendientes de atención.
+                    </span>
                   </td>
                 </tr>
               ) : (
-                resumen.alertasActivas.map((alerta) => (
-                  <tr key={alerta.id} className="transition-colors hover:bg-slate-50/80">
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${
-                          alerta.nivel === 'Crítica'
-                            ? 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'
-                            : 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200'
-                        }`}
-                      >
-                        {alerta.nivel}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700">
-                      {alerta.id_sistema}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700">
-                      {alerta.id_sensor}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-900 tabular-nums">
-                      {alerta.valor_registrado}
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{alerta.umbral_superado}</td>
-                    <td className="max-w-xs px-4 py-3 text-slate-600">{alerta.mensaje}</td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-500 tabular-nums">
-                      {alerta.timestamp}
-                    </td>
-                    {canResolveAlerts && (
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => void handleResolveAlert(alerta)}
-                          className="rounded-lg border border-emerald-700 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 transition-colors hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                resumen.alertasActivas.map((alerta) => {
+                  const ts = formatAlertTimestamp(alerta.timestamp);
+                  const diag = parseAlertDiagnosis(alerta, sensores);
+
+                  return (
+                    <tr
+                      key={alerta.id}
+                      className="transition-colors hover:bg-[#FAF0F0]/80"
+                    >
+                      <td className="whitespace-nowrap px-3 py-3.5">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                            alerta.nivel === 'Crítica'
+                              ? 'bg-[#FAD5CE] text-[#5C1D16]'
+                              : 'bg-[#F3E5D8] text-[#5C3419]'
+                          }`}
                         >
-                          Marcar como Resuelta
-                        </button>
+                          {alerta.nivel}
+                        </span>
                       </td>
-                    )}
-                  </tr>
-                ))
+                      <td className="whitespace-nowrap px-3 py-3.5 font-sans font-medium text-slate-800 tabular-nums">
+                        {alerta.id_sistema}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3.5 text-slate-700">
+                        <span className="font-sans font-medium text-slate-800 tabular-nums">
+                          {alerta.id_sensor}
+                        </span>{' '}
+                        · {formatVariableLabel(alerta.tipo_variable)}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3.5">
+                        <p className="font-bold text-slate-900 tabular-nums">
+                          {alerta.valor_registrado} {diag.unit}
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-500 tabular-nums">
+                          {diag.limitLabel}
+                        </p>
+                      </td>
+                      <td className="max-w-xs px-3 py-3.5 text-xs font-medium text-slate-700">
+                        {diag.diagnosis}
+                      </td>
+                      <td
+                        title={alerta.timestamp}
+                        className="whitespace-nowrap px-3 py-3.5"
+                      >
+                        <p className="text-sm font-semibold text-slate-800">{ts.relative}</p>
+                        <p className="mt-0.5 text-xs text-slate-500 tabular-nums">
+                          {ts.exact}
+                        </p>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3.5 text-right">
+                        {canResolveAlerts ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleResolveAlert(alerta)}
+                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-white px-3.5 py-1.5 text-xs font-semibold text-[#00753A] shadow-2xs transition-colors duration-200 hover:bg-[#00753A] hover:text-white"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                            Resolver
+                          </button>
+                        ) : (
+                          <span className="inline-flex rounded-full bg-[#F4F6F5] px-3 py-1 text-xs font-medium text-slate-500">
+                            Atención por encargado
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </section>
 
-      {/* ==================== HISTÓRICO CON VERIFICACIÓN SHA-256 ==================== */}
+      {/* 5. TABLA DE HISTÓRICO DE MEDICIONES */}
       <section
-        id="dash-historico-mediciones"
-        className="rounded-xl border border-slate-200 bg-white shadow-xs"
+        ref={measurementsRef}
+        className="rounded-3xl bg-white shadow-[0_2px_12px_rgba(15,23,42,0.03)]"
       >
-        <div className="flex flex-col gap-1 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-              <ShieldCheck className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
-              Histórico de Mediciones con Verificación Criptográfica en Vivo
+        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-6 py-4 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-[#00753A]" strokeWidth={1.75} />
+            <h3 className="text-base font-semibold text-slate-900">
+              Histórico de Mediciones ({scopedMediciones.length})
             </h3>
-            <p className="text-xs text-slate-500">
-              Cada fila recalcula SHA-256 en el navegador contra el digest persistido en Firestore (
-              {filteredMediciones.length} registros)
-            </p>
+          </div>
+
+          <div
+            role="tablist"
+            aria-label="Filtrar mediciones por rango"
+            className="inline-flex self-start rounded-xl bg-[#F4F6F5] p-1 text-xs sm:self-auto"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={measurementsScope === 'all'}
+              onClick={() => {
+                setMeasurementsScope('all');
+                setCurrentPage(1);
+              }}
+              className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
+                measurementsScope === 'all'
+                  ? 'bg-white font-semibold text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Todas
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={measurementsScope === 'out_of_range'}
+              onClick={() => {
+                setMeasurementsScope('out_of_range');
+                setCurrentPage(1);
+              }}
+              className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
+                measurementsScope === 'out_of_range'
+                  ? 'bg-white font-semibold text-[#5C3419] shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Fuera de rango
+            </button>
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
+          <table className="w-full table-fixed border-collapse text-left text-sm">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[24%]" />
+              <col className="w-[24%]" />
+              <col className="w-[16%]" />
+              <col className="w-[14%]" />
+            </colgroup>
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
-                <th className="px-4 py-3">Timestamp (ISO 8601)</th>
-                <th className="px-4 py-3">Sistema</th>
-                <th className="px-4 py-3">Dispositivo</th>
-                <th className="px-4 py-3">Sensor</th>
-                <th className="px-4 py-3">Variable</th>
-                <th className="px-4 py-3 text-right">Valor</th>
-                <th className="px-4 py-3">Conexión</th>
-                <th className="px-4 py-3">Hash Almacenado (SHA-256)</th>
-                <th className="px-4 py-3">Integridad Criptográfica (SHA-256)</th>
+              <tr className="border-b border-slate-100 bg-slate-50/60 text-xs font-semibold tracking-wider text-slate-500 uppercase">
+                <th className="px-5 py-3">Fecha y hora</th>
+                <th className="px-5 py-3">Instalación</th>
+                <th className="px-5 py-3">Sensor / Variable</th>
+                <th className="px-5 py-3 text-left">Valor</th>
+                <th className="px-5 py-3 text-right">Estado</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredMediciones.length === 0 ? (
+              {paginatedMediciones.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">
-                    No hay mediciones que coincidan con los filtros seleccionados.
+                  <td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-500">
+                    No hay mediciones registradas para los filtros actuales.
                   </td>
                 </tr>
               ) : (
-                filteredMediciones.map((m) => {
-                  const isVerified = integrityStatusMap[m.id];
-                  const integrityLabel =
-                    isVerified === undefined
-                      ? 'Verificando...'
-                      : isVerified
-                        ? '[VÁLIDO - INTEGRIDAD VERIFICADA]'
-                        : '[ALERTA - POSIBLE ALTERACIÓN DE DATO]';
+                paginatedMediciones.map((m) => {
+                  const readableDate = formatEditorialDateTime(m.timestamp);
+
+                  const sensor = sensores.find((s) => s.id_sensor === m.id_sensor);
+                  const instalacion = instalaciones.find((inst) => inst.id_sistema === m.id_sistema);
+                  const isAboveMax = sensor ? m.valor > sensor.umbral_max : m.alerta;
+                  const isBelowMin = sensor ? m.valor < sensor.umbral_min : false;
+                  const isOutOfRange = isAboveMax || isBelowMin;
+                  const unitLabel = formatUnit(m.unidad);
 
                   return (
-                    <tr key={m.id} className="transition-colors hover:bg-slate-50/80">
-                      <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-slate-600 tabular-nums">
-                        {m.timestamp}
+                    <tr key={m.id} className="hover:bg-slate-50/70">
+                      <td
+                        title={m.timestamp}
+                        className="truncate whitespace-nowrap px-5 py-3 text-xs text-slate-600 tabular-nums"
+                      >
+                        {readableDate}
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-slate-700">
+                      <td
+                        title={
+                          instalacion?.nombre
+                            ? `${m.id_sistema} · ${instalacion.nombre}`
+                            : m.id_sistema
+                        }
+                        className="truncate whitespace-nowrap px-5 py-3 font-sans font-medium text-slate-800 tabular-nums"
+                      >
                         {m.id_sistema}
+                        {instalacion?.nombre && (
+                          <span className="font-normal text-slate-600">
+                            {' '}
+                            · {instalacion.nombre}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-slate-600">
-                        {m.id_dispositivo}
+                      <td className="truncate whitespace-nowrap px-5 py-3 text-slate-700">
+                        <span className="font-sans font-medium text-slate-800 tabular-nums">
+                          {m.id_sensor}
+                        </span>{' '}
+                        · {formatVariableLabel(m.tipo_variable)}
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-xs font-medium text-slate-900">
-                        {m.id_sensor}
+                      <td className="whitespace-nowrap px-5 py-3 text-left tabular-nums">
+                        {isOutOfRange ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[#F3E5D8] px-2.5 py-0.5 text-xs font-semibold text-[#5C3419]">
+                            <span>{isBelowMin ? '↓' : '↑'}</span>
+                            <span>
+                              {m.valor} {unitLabel}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-slate-900">
+                            {m.valor} {unitLabel}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-4 py-2.5 text-slate-700">{m.tipo_variable}</td>
-                      <td className="whitespace-nowrap px-4 py-2.5 text-right font-medium text-slate-900 tabular-nums">
-                        {m.valor} {m.unidad}
-                      </td>
-                      <td className="px-4 py-2.5">
+                      <td className="whitespace-nowrap px-5 py-3 text-right">
                         <span
-                          className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${
+                          className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${
                             m.estado_conexion === 'En línea'
-                              ? 'bg-emerald-50 text-emerald-800'
-                              : 'bg-amber-50 text-amber-800'
+                              ? 'bg-[#E2EFE6] text-[#1B432C]'
+                              : 'bg-[#F3E5D8] text-[#5C3419]'
                           }`}
                         >
                           {m.estado_conexion}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-slate-500">
-                        {m.hash_integridad.slice(0, 20)}...
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2.5">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
-                            isVerified === undefined
-                              ? 'bg-slate-100 text-slate-600'
-                              : isVerified
-                                ? 'bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200'
-                                : 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'
-                          }`}
-                        >
-                          {integrityLabel}
                         </span>
                       </td>
                     </tr>
@@ -783,6 +1236,40 @@ export default function DashboardMonitor({
             </tbody>
           </table>
         </div>
+
+        {/* Paginación de 12 filas por página */}
+        {scopedMediciones.length > 0 && (
+          <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-100 px-6 py-3.5 text-xs text-slate-600 sm:flex-row">
+            <p className="tabular-nums">
+              Mostrando {(safePage - 1) * PAGE_SIZE + 1}–
+              {Math.min(safePage * PAGE_SIZE, scopedMediciones.length)} de{' '}
+              {scopedMediciones.length} mediciones
+            </p>
+            <div className="inline-flex items-center gap-2">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="inline-flex items-center gap-1 rounded-xl border-0 bg-[#F4F6F5] px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-[#E6EAE8] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Anterior
+              </button>
+              <span className="px-1 font-medium tabular-nums">
+                {safePage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="inline-flex items-center gap-1 rounded-xl border-0 bg-[#F4F6F5] px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-[#E6EAE8] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Siguiente
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
     </section>
   );

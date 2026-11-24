@@ -552,3 +552,22 @@ export async function resolverAlerta(
     detalle: `Alerta ${alertaId} (sensor ${sanitizeInput(idSensor)}) marcada como Resuelta`,
   });
 }
+
+export async function reabrirAlerta(
+  alertaId: string,
+  idSensor: string,
+  actor: CrudActor,
+): Promise<void> {
+  const firestore = requireFirestore();
+  await updateDoc(doc(firestore, 'alertas', alertaId), {
+    estado: 'Activa',
+  });
+
+  await logAuditEvent({
+    uid: actor.uid,
+    email: actor.email,
+    rol: actor.rol,
+    accion: 'REABRIR_ALERTA',
+    detalle: `Alerta ${alertaId} (sensor ${sanitizeInput(idSensor)}) reabierta como Activa`,
+  });
+}
