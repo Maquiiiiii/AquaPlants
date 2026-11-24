@@ -1,7 +1,54 @@
 rules_version = '2';
 
+// ===============================================================
+// Assumed Data Model (AquaPlants / AquaBrain)
+// ===============================================================
+//
+// Collection: usuarios/{userId}
+//   - uid: string (required, immutable for non-admin, must equal auth.uid)
+//   - nombre: string (required, non-empty)
+//   - email: string (required)
+//   - rol: string (required, enum: 'Administrador' | 'Supervisor' | 'Encargado de cultivo')
+//   - fecha_creacion: string (required)
+//
+// Collection: audit_logs/{logId} (immutable)
+//   - uid, email, rol, accion, detalle, timestamp: string (required)
+//   - hash_evento: string (required, length == 64 SHA-256 hex)
+//
+// Collection: instalaciones/{docId} (Module 2 CRUD - Admin write, Auth read)
+//   - id_sistema: string (required, 1..100 chars)
+//   - nombre: string (required, 1..150 chars)
+//   - ubicacion_cifrada: string (required, 1..1000 chars, AES-GCM ciphertext)
+//   - token_dispositivo_cifrado: string (required, 1..1000 chars, AES-GCM ciphertext)
+//   - estado_conexion: string (required, enum: 'En línea' | 'Desconectado')
+//   - ultima_comunicacion: string (required, 1..64 chars)
+//
+// Collection: cultivos/{docId} (Module 2 CRUD - Admin write, Auth read)
+//   - id_cultivo: string (required, 1..100 chars)
+//   - id_sistema: string (required, 1..100 chars)
+//   - nombre_planta: string (required, 1..150 chars)
+//   - fecha_siembra: string (required, 1..64 chars)
+//   - estado: string (required, enum: 'Activo' | 'En cosecha' | 'Inactivo')
+//
+// Collection: sensores/{docId} (Module 2 CRUD - Admin write, Auth read)
+//   - id_sensor: string (required, 1..100 chars)
+//   - id_sistema: string (required, 1..100 chars)
+//   - id_dispositivo: string (required, 1..100 chars)
+//   - tipo_variable: string (required, enum: 'caudal' | 'nutrientes' | 'consumo_hidrico' | 'fotoperiodo')
+//   - unidad: string (required, 1..32 chars)
+//   - umbral_min: number (required, < umbral_max)
+//   - umbral_max: number (required, > umbral_min)
+//   - estado: string (required, enum: 'Activo' | 'Inactivo')
+//
+// Collections: configuraciones, umbrales_alerta, dispositivos (Auth read, Admin write)
+// ===============================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
 
     function isAuthenticated() {
       return request.auth != null;
@@ -24,6 +71,107 @@ service cloud.firestore {
     function isValidRole(roleName) {
       return roleName in ['Administrador', 'Supervisor', 'Encargado de cultivo'];
     }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidNonEmptyString(value, minLen, maxLen) {
+      return value is string
+        && value.size() >= minLen
+        && value.size() <= maxLen;
+    }
+
+    // ===============================================================
+    // Domain Validators (Module 2)
+    // ===============================================================
+
+    function isValidInstalacion(data) {
+      return hasRequiredFields([
+          'id_sistema',
+          'nombre',
+          'ubicacion_cifrada',
+          'token_dispositivo_cifrado',
+          'estado_conexion',
+          'ultima_comunicacion'
+        ])
+        && hasOnlyAllowedFields([
+          'id_sistema',
+          'nombre',
+          'ubicacion_cifrada',
+          'token_dispositivo_cifrado',
+          'estado_conexion',
+          'ultima_comunicacion'
+        ])
+        && isValidNonEmptyString(data.id_sistema, 1, 100)
+        && isValidNonEmptyString(data.nombre, 1, 150)
+        && isValidNonEmptyString(data.ubicacion_cifrada, 1, 1000)
+        && isValidNonEmptyString(data.token_dispositivo_cifrado, 1, 1000)
+        && data.estado_conexion in ['En línea', 'Desconectado']
+        && isValidNonEmptyString(data.ultima_comunicacion, 1, 64);
+    }
+
+    function isValidCultivo(data) {
+      return hasRequiredFields([
+          'id_cultivo',
+          'id_sistema',
+          'nombre_planta',
+          'fecha_siembra',
+          'estado'
+        ])
+        && hasOnlyAllowedFields([
+          'id_cultivo',
+          'id_sistema',
+          'nombre_planta',
+          'fecha_siembra',
+          'estado'
+        ])
+        && isValidNonEmptyString(data.id_cultivo, 1, 100)
+        && isValidNonEmptyString(data.id_sistema, 1, 100)
+        && isValidNonEmptyString(data.nombre_planta, 1, 150)
+        && isValidNonEmptyString(data.fecha_siembra, 1, 64)
+        && data.estado in ['Activo', 'En cosecha', 'Inactivo'];
+    }
+
+    function isValidSensor(data) {
+      return hasRequiredFields([
+          'id_sensor',
+          'id_sistema',
+          'id_dispositivo',
+          'tipo_variable',
+          'unidad',
+          'umbral_min',
+          'umbral_max',
+          'estado'
+        ])
+        && hasOnlyAllowedFields([
+          'id_sensor',
+          'id_sistema',
+          'id_dispositivo',
+          'tipo_variable',
+          'unidad',
+          'umbral_min',
+          'umbral_max',
+          'estado'
+        ])
+        && isValidNonEmptyString(data.id_sensor, 1, 100)
+        && isValidNonEmptyString(data.id_sistema, 1, 100)
+        && isValidNonEmptyString(data.id_dispositivo, 1, 100)
+        && data.tipo_variable in ['caudal', 'nutrientes', 'consumo_hidrico', 'fotoperiodo']
+        && isValidNonEmptyString(data.unidad, 1, 32)
+        && data.umbral_min is number
+        && data.umbral_max is number
+        && data.umbral_min < data.umbral_max
+        && data.estado in ['Activo', 'Inactivo'];
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
 
     // Colección de perfiles de usuario (RBAC)
     match /usuarios/{userId} {
@@ -85,9 +233,25 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Módulo 2: Gestión de Instalaciones Aeropónicas
     match /instalaciones/{docId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidInstalacion(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Módulo 2: Gestión de Cultivos
+    match /cultivos/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidCultivo(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Módulo 2: Gestión de Sensores y Umbrales por Dispositivo
+    match /sensores/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidSensor(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /dispositivos/{docId} {

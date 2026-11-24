@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import CrudManager from './components/CrudManager';
 import { useAuth } from './context/AuthContext';
 import {
   subscribeAuditLogs,
@@ -375,6 +376,7 @@ export default function App() {
           <strong>Rol Activo:</strong> {profile?.rol ?? 'Sin perfil en Firestore'}
         </p>
         <nav aria-label="Navegación de sesión">
+          <a href="#gestion-crud">Gestión CRUD</a> |{' '}
           <a href="#autotest-criptografico">Auto-test Criptográfico</a> |{' '}
           <a href="#auditoria-tiempo-real">Auditoría (Últimos 15)</a> |{' '}
           <button type="button" onClick={() => void handleLogout()}>
@@ -389,6 +391,12 @@ export default function App() {
           {uiMessage && <p>{uiMessage}</p>}
         </section>
       )}
+
+      <CrudManager
+        profile={profile}
+        userUid={user.uid}
+        userEmail={user.email ?? 'desconocido'}
+      />
 
       <section id="autotest-criptografico">
         <h2>Auto-test Criptográfico (AES-GCM 256-bit + PBKDF2 + SHA-256 + XSS)</h2>

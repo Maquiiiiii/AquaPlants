@@ -111,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Evita condiciones de carrera cuando `register` crea el documento en Firestore justo después de createUser
-  const registeringUidRef = useRef<string | null>(null);
+  const isRegisteringRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!auth) {
@@ -126,7 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (registeringUidRef.current === firebaseUser.uid) {
+      if (isRegisteringRef.current) {
         setLoading(false);
         return;
       }
@@ -224,10 +224,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw validationError;
       }
 
+      isRegisteringRef.current = true;
       try {
         const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         const uid = credential.user.uid;
-        registeringUidRef.current = uid;
 
         const newProfile: UserProfile = {
           uid,
@@ -252,7 +252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuthError(msg);
         throw new Error(msg);
       } finally {
-        registeringUidRef.current = null;
+        isRegisteringRef.current = false;
       }
     },
     [],
