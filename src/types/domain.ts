@@ -79,3 +79,50 @@ export interface SensorInput {
   umbral_max: number;
   estado: EstadoSensor;
 }
+
+export const ESTADOS_MEDICION = ['En línea', 'Sincronizado Offline'] as const;
+export type EstadoMedicion = (typeof ESTADOS_MEDICION)[number];
+
+export const NIVELES_ALERTA = ['Crítica', 'Advertencia'] as const;
+export type NivelAlerta = (typeof NIVELES_ALERTA)[number];
+
+export const ESTADOS_ALERTA = ['Activa', 'Resuelta'] as const;
+export type EstadoAlerta = (typeof ESTADOS_ALERTA)[number];
+
+export interface Medicion {
+  id: string;
+  id_sistema: string;
+  id_dispositivo: string;
+  id_sensor: string;
+  tipo_variable: TipoVariable;
+  valor: number;
+  unidad: string;
+  timestamp: string;
+  estado_conexion: EstadoMedicion;
+  alerta: boolean;
+  hash_integridad: string;
+}
+
+export interface Alerta {
+  id: string;
+  id_sistema: string;
+  id_sensor: string;
+  tipo_variable: string;
+  valor_registrado: number;
+  umbral_superado: string;
+  mensaje: string;
+  nivel: NivelAlerta;
+  estado: EstadoAlerta;
+  timestamp: string;
+}
+
+export interface StressTestResult {
+  totalSolicitadas: number;
+  exitosas: number;
+  fallidas: number;
+  alertasGeneradas: number;
+  tiempoTotalMs: number;
+  latenciaPromedioMs: number;
+  ejecutadaEn: string;
+}
+

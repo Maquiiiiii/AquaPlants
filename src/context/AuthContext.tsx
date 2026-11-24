@@ -28,6 +28,7 @@ interface AuthContextValue {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
+  profileLoading: boolean;
   authError: string | null;
   isConfigured: boolean;
   configError: string | null;
@@ -108,6 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(() => Boolean(auth));
+  const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Evita condiciones de carrera cuando `register` crea el documento en Firestore justo después de createUser
@@ -122,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(firebaseUser);
       if (!firebaseUser) {
         setProfile(null);
+        setProfileLoading(false);
         setLoading(false);
         return;
       }
@@ -131,12 +134,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      setProfileLoading(true);
       try {
         const fetchedProfile = await fetchUserProfile(firebaseUser.uid);
         setProfile(fetchedProfile);
       } catch (error) {
         setAuthError(mapFirebaseError(error));
       } finally {
+        setProfileLoading(false);
         setLoading(false);
       }
     });
@@ -287,6 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       profile,
       loading,
+      profileLoading,
       authError,
       isConfigured: isFirebaseConfigured,
       configError: firebaseInitError,
@@ -295,7 +301,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       clearAuthError,
     }),
-    [user, profile, loading, authError, login, register, logout, clearAuthError],
+    [user, profile, loading, profileLoading, authError, login, register, logout, clearAuthError],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

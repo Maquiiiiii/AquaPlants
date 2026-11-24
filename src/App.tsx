@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import CrudManager from './components/CrudManager';
+import IotSimulator from './components/IotSimulator';
 import { useAuth } from './context/AuthContext';
 import {
   subscribeAuditLogs,
@@ -19,6 +20,7 @@ export default function App() {
     user,
     profile,
     loading,
+    profileLoading,
     authError,
     isConfigured,
     configError,
@@ -373,10 +375,12 @@ export default function App() {
           <strong>Usuario:</strong> {profile?.nombre ?? user.email ?? 'Sin nombre'} |{' '}
           <strong>Correo:</strong> {profile?.email ?? user.email ?? 'Sin correo'} |{' '}
           <strong>UID:</strong> <code>{user.uid}</code> |{' '}
-          <strong>Rol Activo:</strong> {profile?.rol ?? 'Sin perfil en Firestore'}
+          <strong>Rol Activo:</strong>{' '}
+          {profile?.rol ?? (profileLoading ? 'Cargando perfil...' : 'Sin perfil en Firestore')}
         </p>
         <nav aria-label="Navegación de sesión">
           <a href="#gestion-crud">Gestión CRUD</a> |{' '}
+          <a href="#simulador-iot">Simulador IoT</a> |{' '}
           <a href="#autotest-criptografico">Auto-test Criptográfico</a> |{' '}
           <a href="#auditoria-tiempo-real">Auditoría (Últimos 15)</a> |{' '}
           <button type="button" onClick={() => void handleLogout()}>
@@ -393,6 +397,12 @@ export default function App() {
       )}
 
       <CrudManager
+        profile={profile}
+        userUid={user.uid}
+        userEmail={user.email ?? 'desconocido'}
+      />
+
+      <IotSimulator
         profile={profile}
         userUid={user.uid}
         userEmail={user.email ?? 'desconocido'}
