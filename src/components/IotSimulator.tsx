@@ -1,5 +1,16 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Cpu,
+  Gauge,
+  RefreshCw,
+  Send,
+  WifiOff,
+  Zap,
+} from 'lucide-react';
+import {
   subscribeInstalaciones,
   subscribeSensores,
   type CrudActor,
@@ -30,6 +41,9 @@ interface IotSimulatorProps {
   userUid: string;
   userEmail: string;
 }
+
+const INPUT_CLASS =
+  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/20';
 
 export default function IotSimulator({ profile, userUid, userEmail }: IotSimulatorProps) {
   const actor: CrudActor = {
@@ -83,10 +97,9 @@ export default function IotSimulator({ profile, userUid, userEmail }: IotSimulat
     };
   }, []);
 
-  const effectiveSistemaId =
-    instalaciones.some((inst) => inst.id_sistema === selectedSistemaId)
-      ? selectedSistemaId
-      : (instalaciones[0]?.id_sistema ?? '');
+  const effectiveSistemaId = instalaciones.some((inst) => inst.id_sistema === selectedSistemaId)
+    ? selectedSistemaId
+    : (instalaciones[0]?.id_sistema ?? '');
 
   const systemSensors = sensores.filter((s) => s.id_sistema === effectiveSistemaId);
 
@@ -169,8 +182,8 @@ export default function IotSimulator({ profile, userUid, userEmail }: IotSimulat
       return;
     }
     const span = Math.max(selectedSensor.umbral_max - selectedSensor.umbral_min, 1);
-    const base = Math.abs(selectedSensor.umbral_max) > 0 ? Math.abs(selectedSensor.umbral_max) : span;
-    // Fuerza un desvío > 25% sobre el umbral máximo para disparar nivel "Crítica"
+    const base =
+      Math.abs(selectedSensor.umbral_max) > 0 ? Math.abs(selectedSensor.umbral_max) : span;
     const criticalValue = Number((selectedSensor.umbral_max + base * 0.35 + 1).toFixed(2));
     void dispatchReading(criticalValue);
   }
@@ -218,7 +231,10 @@ export default function IotSimulator({ profile, userUid, userEmail }: IotSimulat
 
   async function handleStressTest() {
     if (!selectedSensor) {
-      setFeedback({ type: 'error', text: 'Selecciona un sensor válido para la prueba de estrés.' });
+      setFeedback({
+        type: 'error',
+        text: 'Selecciona un sensor válido para la prueba de estrés.',
+      });
       return;
     }
     if (offlineMode) {
@@ -269,301 +285,531 @@ export default function IotSimulator({ profile, userUid, userEmail }: IotSimulat
   }
 
   return (
-    <section id="simulador-iot">
-      <h2>Simulador IoT AquaBrain, Integridad SHA-256, Alertas y Contingencia Offline</h2>
+    <section id="simulador-iot" className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+            Simulador IoT AquaBrain, Integridad SHA-256 y Contingencia Offline
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Emisión de telemetría firmada, disparo automático de alertas, cola cifrada AES-GCM y
+            pruebas de carga
+          </p>
+        </div>
 
-      <nav aria-label="Navegación Módulo 3">
-        <a href="#iot-controles">Simulador y Contingencia</a> |{' '}
-        <a href="#iot-estres">Prueba de Estrés (50)</a> |{' '}
-        <a href="#iot-mediciones">Mediciones ({mediciones.length})</a> |{' '}
-        <a href="#iot-alertas">Alertas ({alertas.length})</a>
-      </nav>
+        <nav aria-label="Navegación Módulo 3" className="flex flex-wrap gap-2">
+          <a
+            href="#iot-controles"
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Simulador y Offline
+          </a>
+          <a
+            href="#iot-estres"
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Prueba de Estrés
+          </a>
+          <a
+            href="#iot-mediciones"
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Mediciones ({mediciones.length})
+          </a>
+          <a
+            href="#iot-alertas"
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Alertas ({alertas.length})
+          </a>
+        </nav>
+      </div>
 
-      {streamError && <p role="alert">{streamError}</p>}
-      {feedback && (
-        <p role={feedback.type === 'error' ? 'alert' : 'status'}>{feedback.text}</p>
+      {streamError && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          {streamError}
+        </div>
       )}
 
-      {/* ==================== CONTROLES DE SIMULACIÓN ==================== */}
-      <section id="iot-controles">
-        <h3>Selección de Instalación / Sensor y Envío de Telemetría</h3>
+      {feedback && (
+        <div
+          role={feedback.type === 'error' ? 'alert' : 'status'}
+          className={`flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm ${
+            feedback.type === 'error'
+              ? 'border-red-200 bg-red-50 text-red-800'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+          }`}
+        >
+          {feedback.type === 'error' ? (
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" strokeWidth={1.75} />
+          ) : (
+            <CheckCircle2
+              className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700"
+              strokeWidth={1.75}
+            />
+          )}
+          <span>{feedback.text}</span>
+        </div>
+      )}
 
-        <form onSubmit={handleManualSubmit}>
-          <fieldset>
-            <legend>Dispositivo IoT Simulado</legend>
-            <p>
-              <label htmlFor="iot-select-instalacion">Instalación (id_sistema):</label>
-              <br />
-              <select
-                id="iot-select-instalacion"
-                value={effectiveSistemaId}
-                onChange={(e) => {
-                  setSelectedSistemaId(e.target.value);
-                  setSelectedSensorId('');
-                }}
-                disabled={instalaciones.length === 0}
-              >
-                {instalaciones.length === 0 ? (
-                  <option value="">-- Sin instalaciones disponibles --</option>
-                ) : (
-                  instalaciones.map((inst) => (
-                    <option key={inst.id} value={inst.id_sistema}>
-                      {inst.id_sistema} — {inst.nombre} ({inst.estado_conexion})
-                    </option>
-                  ))
-                )}
-              </select>
-            </p>
+      {/* ==================== CONTROLES DE SIMULACIÓN + OFFLINE ==================== */}
+      <section id="iot-controles" className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <form
+          onSubmit={handleManualSubmit}
+          className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+        >
+          <fieldset className="space-y-4">
+            <legend className="flex items-center gap-2 text-base font-semibold text-slate-900">
+              <Cpu className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
+              Dispositivo IoT Simulado
+            </legend>
 
-            <p>
-              <label htmlFor="iot-select-sensor">Sensor asociado (id_sensor):</label>
-              <br />
-              <select
-                id="iot-select-sensor"
-                value={selectedSensor?.id_sensor ?? ''}
-                onChange={(e) => setSelectedSensorId(e.target.value)}
-                disabled={systemSensors.length === 0}
-              >
-                {systemSensors.length === 0 ? (
-                  <option value="">-- Sin sensores en esta instalación --</option>
-                ) : (
-                  systemSensors.map((sen) => (
-                    <option key={sen.id} value={sen.id_sensor}>
-                      {sen.id_sensor} ({sen.tipo_variable}) — {sen.id_dispositivo}
-                    </option>
-                  ))
-                )}
-              </select>
-            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="iot-select-instalacion"
+                  className="mb-1 block text-xs font-medium text-slate-700"
+                >
+                  Instalación (id_sistema)
+                </label>
+                <select
+                  id="iot-select-instalacion"
+                  value={effectiveSistemaId}
+                  onChange={(e) => {
+                    setSelectedSistemaId(e.target.value);
+                    setSelectedSensorId('');
+                  }}
+                  disabled={instalaciones.length === 0}
+                  className={INPUT_CLASS}
+                >
+                  {instalaciones.length === 0 ? (
+                    <option value="">-- Sin instalaciones disponibles --</option>
+                  ) : (
+                    instalaciones.map((inst) => (
+                      <option key={inst.id} value={inst.id_sistema}>
+                        {inst.id_sistema} — {inst.nombre} ({inst.estado_conexion})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="iot-select-sensor"
+                  className="mb-1 block text-xs font-medium text-slate-700"
+                >
+                  Sensor asociado (id_sensor)
+                </label>
+                <select
+                  id="iot-select-sensor"
+                  value={selectedSensor?.id_sensor ?? ''}
+                  onChange={(e) => setSelectedSensorId(e.target.value)}
+                  disabled={systemSensors.length === 0}
+                  className={INPUT_CLASS}
+                >
+                  {systemSensors.length === 0 ? (
+                    <option value="">-- Sin sensores en esta instalación --</option>
+                  ) : (
+                    systemSensors.map((sen) => (
+                      <option key={sen.id} value={sen.id_sensor}>
+                        {sen.id_sensor} ({sen.tipo_variable}) — {sen.id_dispositivo}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            </div>
 
             {selectedSensor && (
-              <p>
-                <strong>Umbrales configurados:</strong> {selectedSensor.umbral_min} -{' '}
-                {selectedSensor.umbral_max} {selectedSensor.unidad} |{' '}
-                <strong>Dispositivo:</strong> <code>{selectedSensor.id_dispositivo}</code> |{' '}
-                <strong>Variable:</strong> {selectedSensor.tipo_variable}
-              </p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-700 tabular-nums">
+                <span className="font-semibold text-slate-900">Umbrales configurados:</span>{' '}
+                {selectedSensor.umbral_min} - {selectedSensor.umbral_max} {selectedSensor.unidad}{' '}
+                <span className="mx-1.5 text-slate-300">|</span>
+                <span className="font-semibold text-slate-900">Dispositivo:</span>{' '}
+                <code className="font-mono">{selectedSensor.id_dispositivo}</code>{' '}
+                <span className="mx-1.5 text-slate-300">|</span>
+                <span className="font-semibold text-slate-900">Variable:</span>{' '}
+                {selectedSensor.tipo_variable}
+              </div>
             )}
 
-            <p>
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={handleSendNormal}
                 disabled={!selectedSensor || sending || stressRunning}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
               >
+                <Send className="h-4 w-4" strokeWidth={1.75} />
                 Enviar Medición Normal
-              </button>{' '}
+              </button>
               <button
                 type="button"
                 onClick={handleSendCritical}
                 disabled={!selectedSensor || sending || stressRunning}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3.5 py-2 text-sm font-medium text-red-800 transition-colors hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 disabled:opacity-60"
               >
+                <AlertTriangle className="h-4 w-4" strokeWidth={1.75} />
                 Forzar Medición Fuera de Umbral
               </button>
-            </p>
+            </div>
 
-            <p>
-              <label htmlFor="iot-manual-value">Valor manual para pruebas de borde:</label>
-              <br />
-              <input
-                id="iot-manual-value"
-                type="number"
-                step="any"
-                value={manualValue}
-                onChange={(e) => setManualValue(e.target.value)}
-                placeholder="Ej: 15.5"
-              />{' '}
-              <button type="submit" disabled={!selectedSensor || sending || stressRunning}>
-                Enviar Valor Manual
-              </button>
-            </p>
+            <div className="border-t border-slate-100 pt-3">
+              <label
+                htmlFor="iot-manual-value"
+                className="mb-1 block text-xs font-medium text-slate-700"
+              >
+                Valor manual para pruebas de borde
+              </label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  id="iot-manual-value"
+                  type="number"
+                  step="any"
+                  value={manualValue}
+                  onChange={(e) => setManualValue(e.target.value)}
+                  placeholder="Ej: 15.5"
+                  className={INPUT_CLASS}
+                />
+                <button
+                  type="submit"
+                  disabled={!selectedSensor || sending || stressRunning}
+                  className="shrink-0 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Enviar Valor Manual
+                </button>
+              </div>
+            </div>
           </fieldset>
+        </form>
 
-          <fieldset>
-            <legend>Contingencia de Pérdida de Conectividad (Cola Offline Cifrada AES-GCM)</legend>
-            <p>
-              <label htmlFor="iot-offline-toggle">
+        {/* Contingencia Offline + Estrés */}
+        <div className="space-y-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+            <fieldset className="space-y-4">
+              <legend className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                <WifiOff className="h-4 w-4 text-amber-600" strokeWidth={1.75} />
+                Contingencia de Pérdida de Conectividad (Cola Offline Cifrada AES-GCM)
+              </legend>
+
+              <label
+                htmlFor="iot-offline-toggle"
+                className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-800"
+              >
                 <input
                   id="iot-offline-toggle"
                   type="checkbox"
                   checked={offlineMode}
                   onChange={(e) => void handleOfflineToggle(e)}
                   disabled={syncing || stressRunning}
-                />{' '}
+                  className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600"
+                />
                 Simular pérdida de conexión a Internet (Modo Offline Cifrado)
               </label>
-            </p>
-            <p>
-              <strong>Estado actual:</strong>{' '}
-              {offlineMode ? 'OFFLINE (Encolando en localStorage con AES-GCM)' : 'EN LÍNEA'} |{' '}
-              <strong>Mediciones cifradas en cola:</strong> {offlineQueueCount}{' '}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                <div className="space-y-1">
+                  <p className="text-slate-700">
+                    <span className="font-medium text-slate-900">Estado actual:</span>{' '}
+                    <span
+                      className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${
+                        offlineMode
+                          ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200'
+                          : 'bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200'
+                      }`}
+                    >
+                      {offlineMode
+                        ? 'OFFLINE (Encolando en localStorage con AES-GCM)'
+                        : 'EN LÍNEA'}
+                    </span>
+                  </p>
+                  <p className="text-slate-700 tabular-nums">
+                    <span className="font-medium text-slate-900">Mediciones cifradas en cola:</span>{' '}
+                    {offlineQueueCount}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void handleSyncOffline()}
+                  disabled={offlineQueueCount === 0 || syncing || offlineMode}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
+                  {syncing ? 'Sincronizando...' : 'Forzar Sincronización'}
+                </button>
+              </div>
+
+              {offlineQueuePreview.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-900">
+                  <span className="font-semibold">Último paquete cifrado en localStorage:</span>{' '}
+                  <code className="break-all font-mono">
+                    {offlineQueuePreview[offlineQueuePreview.length - 1].slice(0, 48)}...
+                  </code>
+                </div>
+              )}
+            </fieldset>
+          </div>
+
+          <section
+            id="iot-estres"
+            className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                  <Gauge className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
+                  Prueba de Estrés / Carga Masiva
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Envía 50 mediciones consecutivas midiendo latencia y disparo de alertas
+                </p>
+              </div>
+
               <button
                 type="button"
-                onClick={() => void handleSyncOffline()}
-                disabled={offlineQueueCount === 0 || syncing || offlineMode}
+                onClick={() => void handleStressTest()}
+                disabled={!selectedSensor || stressRunning || sending || offlineMode}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 disabled:opacity-50"
               >
-                {syncing ? 'Sincronizando...' : 'Forzar Sincronización'}
+                <Zap className="h-4 w-4" strokeWidth={1.75} />
+                {stressRunning
+                  ? `Ejecutando Prueba de Estrés (${stressProgress ?? ''})...`
+                  : 'Ejecutar Prueba de Estrés (50 mediciones)'}
               </button>
-            </p>
-            {offlineQueuePreview.length > 0 && (
-              <p>
-                <strong>Último paquete cifrado en localStorage:</strong>{' '}
-                <code>{offlineQueuePreview[offlineQueuePreview.length - 1].slice(0, 48)}...</code>
-              </p>
+            </div>
+
+            {stressResult && (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-xs tabular-nums">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 font-medium text-slate-600">
+                      <th className="px-3 py-2">Ejecutada en</th>
+                      <th className="px-3 py-2 text-right">Solicitadas</th>
+                      <th className="px-3 py-2 text-right">Exitosas</th>
+                      <th className="px-3 py-2 text-right">Fallidas</th>
+                      <th className="px-3 py-2 text-right">Alertas</th>
+                      <th className="px-3 py-2 text-right">Tiempo Total (ms)</th>
+                      <th className="px-3 py-2 text-right">Latencia (ms/reg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="px-3 py-2 font-mono text-slate-600">
+                        {stressResult.ejecutadaEn}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium">
+                        {stressResult.totalSolicitadas}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-emerald-700">
+                        {stressResult.exitosas}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-red-700">
+                        {stressResult.fallidas}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-amber-700">
+                        {stressResult.alertasGeneradas}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium">
+                        {stressResult.tiempoTotalMs}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium">
+                        {stressResult.latenciaPromedioMs}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             )}
-          </fieldset>
-        </form>
-      </section>
-
-      {/* ==================== PRUEBA DE ESTRÉS ==================== */}
-      <section id="iot-estres">
-        <h3>Prueba de Estrés / Carga Masiva</h3>
-        <p>
-          <button
-            type="button"
-            onClick={() => void handleStressTest()}
-            disabled={!selectedSensor || stressRunning || sending || offlineMode}
-          >
-            {stressRunning
-              ? `Ejecutando Prueba de Estrés (${stressProgress ?? ''})...`
-              : 'Ejecutar Prueba de Estrés (50 mediciones)'}
-          </button>
-        </p>
-
-        {stressResult && (
-          <table>
-            <thead>
-              <tr>
-                <th>Ejecutada en</th>
-                <th>Total Solicitadas</th>
-                <th>Exitosas</th>
-                <th>Fallidas</th>
-                <th>Alertas Generadas</th>
-                <th>Tiempo Total (ms)</th>
-                <th>Latencia Promedio (ms/reg)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>{stressResult.ejecutadaEn}</td>
-                <td>{stressResult.totalSolicitadas}</td>
-                <td>{stressResult.exitosas}</td>
-                <td>{stressResult.fallidas}</td>
-                <td>{stressResult.alertasGeneradas}</td>
-                <td>{stressResult.tiempoTotalMs}</td>
-                <td>{stressResult.latenciaPromedioMs}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
+          </section>
+        </div>
       </section>
 
       {/* ==================== MEDICIONES EN TIEMPO REAL ==================== */}
-      <section id="iot-mediciones">
-        <h3>Últimas Mediciones Registradas (Tiempo Real — Máx. 15)</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Timestamp (ISO 8601)</th>
-              <th>Sistema</th>
-              <th>Dispositivo</th>
-              <th>Sensor</th>
-              <th>Variable</th>
-              <th>Valor</th>
-              <th>Estado Conexión</th>
-              <th>Alerta</th>
-              <th>Hash Integridad (SHA-256)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mediciones.length === 0 ? (
-              <tr>
-                <td colSpan={9}>No hay mediciones registradas todavía.</td>
+      <section
+        id="iot-mediciones"
+        className="rounded-xl border border-slate-200 bg-white shadow-xs"
+      >
+        <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4">
+          <Activity className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
+          <h3 className="text-base font-semibold text-slate-900">
+            Últimas Mediciones Registradas (Tiempo Real — Máx. 15)
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                <th className="px-3 py-2.5">Timestamp (ISO 8601)</th>
+                <th className="px-3 py-2.5">Sistema</th>
+                <th className="px-3 py-2.5">Dispositivo</th>
+                <th className="px-3 py-2.5">Sensor</th>
+                <th className="px-3 py-2.5">Variable</th>
+                <th className="px-3 py-2.5 text-right">Valor</th>
+                <th className="px-3 py-2.5">Estado Conexión</th>
+                <th className="px-3 py-2.5">Alerta</th>
+                <th className="px-3 py-2.5">Hash Integridad (SHA-256)</th>
               </tr>
-            ) : (
-              mediciones.map((m) => (
-                <tr key={m.id}>
-                  <td>{m.timestamp}</td>
-                  <td>
-                    <code>{m.id_sistema}</code>
-                  </td>
-                  <td>
-                    <code>{m.id_dispositivo}</code>
-                  </td>
-                  <td>
-                    <code>{m.id_sensor}</code>
-                  </td>
-                  <td>{m.tipo_variable}</td>
-                  <td>
-                    {m.valor} {m.unidad}
-                  </td>
-                  <td>{m.estado_conexion}</td>
-                  <td>{m.alerta ? 'SÍ' : 'No'}</td>
-                  <td>
-                    <code>{m.hash_integridad}</code>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {mediciones.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
+                    No hay mediciones registradas todavía.
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                mediciones.map((m) => (
+                  <tr key={m.id} className="transition-colors hover:bg-slate-50/80">
+                    <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-slate-600 tabular-nums">
+                      {m.timestamp}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-slate-700">
+                      {m.id_sistema}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-slate-600">
+                      {m.id_dispositivo}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs font-medium text-slate-900">
+                      {m.id_sensor}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-700">{m.tipo_variable}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-right font-medium text-slate-900 tabular-nums">
+                      {m.valor} {m.unidad}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span
+                        className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${
+                          m.estado_conexion === 'En línea'
+                            ? 'bg-emerald-50 text-emerald-800'
+                            : 'bg-amber-50 text-amber-800'
+                        }`}
+                      >
+                        {m.estado_conexion}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span
+                        className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${
+                          m.alerta
+                            ? 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {m.alerta ? 'SÍ' : 'No'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-slate-500">
+                      {m.hash_integridad}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* ==================== ALERTAS EN TIEMPO REAL ==================== */}
-      <section id="iot-alertas">
-        <h3>Alertas Automáticas Generadas (Tiempo Real — Máx. 15)</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Timestamp (ISO 8601)</th>
-              <th>Sistema</th>
-              <th>Sensor</th>
-              <th>Nivel</th>
-              <th>Umbral Superado</th>
-              <th>Valor</th>
-              <th>Mensaje</th>
-              <th>Estado</th>
-              {canResolveAlerts && <th>Acción</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {alertas.length === 0 ? (
-              <tr>
-                <td colSpan={canResolveAlerts ? 9 : 8}>No hay alertas registradas.</td>
+      <section
+        id="iot-alertas"
+        className="rounded-xl border border-slate-200 bg-white shadow-xs"
+      >
+        <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4">
+          <AlertTriangle className="h-4 w-4 text-amber-600" strokeWidth={1.75} />
+          <h3 className="text-base font-semibold text-slate-900">
+            Alertas Automáticas Generadas (Tiempo Real — Máx. 15)
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                <th className="px-3 py-2.5">Timestamp (ISO 8601)</th>
+                <th className="px-3 py-2.5">Sistema</th>
+                <th className="px-3 py-2.5">Sensor</th>
+                <th className="px-3 py-2.5">Nivel</th>
+                <th className="px-3 py-2.5">Umbral Superado</th>
+                <th className="px-3 py-2.5 text-right">Valor</th>
+                <th className="px-3 py-2.5">Mensaje</th>
+                <th className="px-3 py-2.5">Estado</th>
+                {canResolveAlerts && <th className="px-3 py-2.5 text-right">Acción</th>}
               </tr>
-            ) : (
-              alertas.map((a) => (
-                <tr key={a.id}>
-                  <td>{a.timestamp}</td>
-                  <td>
-                    <code>{a.id_sistema}</code>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {alertas.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={canResolveAlerts ? 9 : 8}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
+                    No hay alertas registradas.
                   </td>
-                  <td>
-                    <code>{a.id_sensor}</code>
-                  </td>
-                  <td>
-                    <strong>{a.nivel}</strong>
-                  </td>
-                  <td>{a.umbral_superado}</td>
-                  <td>{a.valor_registrado}</td>
-                  <td>{a.mensaje}</td>
-                  <td>{a.estado}</td>
-                  {canResolveAlerts && (
-                    <td>
-                      {a.estado === 'Activa' ? (
-                        <button type="button" onClick={() => void handleResolveAlert(a)}>
-                          Marcar Resuelta
-                        </button>
-                      ) : (
-                        'Resuelta'
-                      )}
-                    </td>
-                  )}
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                alertas.map((a) => (
+                  <tr key={a.id} className="transition-colors hover:bg-slate-50/80">
+                    <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-slate-600 tabular-nums">
+                      {a.timestamp}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-slate-700">
+                      {a.id_sistema}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-slate-700">
+                      {a.id_sensor}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span
+                        className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${
+                          a.nivel === 'Crítica'
+                            ? 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'
+                            : 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200'
+                        }`}
+                      >
+                        {a.nivel}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-700">{a.umbral_superado}</td>
+                    <td className="px-3 py-2.5 text-right font-medium text-slate-900 tabular-nums">
+                      {a.valor_registrado}
+                    </td>
+                    <td className="max-w-xs px-3 py-2.5 text-slate-600">{a.mensaje}</td>
+                    <td className="px-3 py-2.5">
+                      <span
+                        className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${
+                          a.estado === 'Activa'
+                            ? 'bg-amber-50 text-amber-800'
+                            : 'bg-emerald-50 text-emerald-800'
+                        }`}
+                      >
+                        {a.estado}
+                      </span>
+                    </td>
+                    {canResolveAlerts && (
+                      <td className="px-3 py-2.5 text-right">
+                        {a.estado === 'Activa' ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleResolveAlert(a)}
+                            className="rounded-md border border-emerald-700 bg-white px-2.5 py-1 text-xs font-medium text-emerald-800 transition-colors hover:bg-emerald-50"
+                          >
+                            Marcar Resuelta
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-500">Resuelta</span>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
     </section>
   );

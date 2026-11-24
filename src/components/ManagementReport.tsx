@@ -1,4 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import {
+  CheckCircle2,
+  FileText,
+  Printer,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react';
 import { logAuditEvent, subscribeAuditLogs } from '../security/auditService';
 import {
   subscribeCultivos,
@@ -52,6 +59,7 @@ const CRITICAL_ACTIONS = [
   'SINCRONIZACION_OFFLINE',
   'PRUEBA_ESTRES_IOT',
   'RESOLVER_ALERTA',
+  'CARGAR_DATOS_SEMILLA',
   'GENERAR_INFORME_GESTION',
 ] as const;
 
@@ -258,205 +266,314 @@ export default function ManagementReport({
   }
 
   return (
-    <section id="informe-gestion">
-      <h2>Informe de Gestión Operativa AquaPlants / AquaBrain</h2>
+    <section id="informe-gestion" className="print-only-container space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-900">
+            <FileText className="h-5 w-5 text-emerald-600" strokeWidth={1.75} />
+            Informe de Gestión Operativa AquaPlants / AquaBrain
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Documento corporativo consolidado desde Cloud Firestore con respaldo de integridad
+          </p>
+        </div>
 
-      <p>
-        <button type="button" onClick={() => void handleGenerateCut()} disabled={emitting}>
-          {emitting ? 'Emitiendo...' : 'Generar / Actualizar Corte de Informe'}
-        </button>{' '}
-        <button type="button" onClick={() => void handlePrintPdf()} disabled={emitting}>
-          Imprimir / Exportar Informe a PDF
-        </button>
-      </p>
+        <div className="no-print flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void handleGenerateCut()}
+            disabled={emitting}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:opacity-60"
+          >
+            <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
+            {emitting ? 'Emitiendo...' : 'Generar / Actualizar Corte de Informe'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handlePrintPdf()}
+            disabled={emitting}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
+          >
+            <Printer className="h-4 w-4" strokeWidth={1.75} />
+            Imprimir / Exportar Informe a PDF
+          </button>
+        </div>
+      </div>
 
-      {streamError && <p role="alert">{streamError}</p>}
-      {reportFeedback && <p role="status">{reportFeedback}</p>}
+      {streamError && (
+        <div
+          role="alert"
+          className="no-print rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          {streamError}
+        </div>
+      )}
+
+      {reportFeedback && (
+        <div
+          role="status"
+          className="no-print flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
+        >
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-700" strokeWidth={1.75} />
+          <span>{reportFeedback}</span>
+        </div>
+      )}
 
       {/* ==================== a) ENCABEZADO DE EMISIÓN ==================== */}
-      <section aria-label="Encabezado de emisión del informe">
-        <h3>a) Encabezado de Emisión</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Campo de Emisión</th>
-              <th>Valor</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <th>Fecha y Hora Exacta de Generación (ISO 8601)</th>
-              <td>{emittedAt}</td>
-            </tr>
-            <tr>
-              <th>Fecha y Hora Local</th>
-              <td>{new Date(emittedAt).toLocaleString('es-CL')}</td>
-            </tr>
-            <tr>
-              <th>Usuario Emisor</th>
-              <td>
-                {issuerName} ({issuerEmail})
-              </td>
-            </tr>
-            <tr>
-              <th>Rol del Emisor</th>
-              <td>{issuerRole}</td>
-            </tr>
-            <tr>
-              <th>Estado General de la Plataforma</th>
-              <td>
-                <strong>{platformStatus}</strong>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <section
+        aria-label="Encabezado de emisión del informe"
+        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+      >
+        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
+          a) Encabezado de Emisión
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                <th className="px-3 py-2">Campo de Emisión</th>
+                <th className="px-3 py-2">Valor</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              <tr>
+                <th className="px-3 py-2 font-medium text-slate-700">
+                  Fecha y Hora Exacta de Generación (ISO 8601)
+                </th>
+                <td className="px-3 py-2 font-mono text-xs text-slate-800 tabular-nums">
+                  {emittedAt}
+                </td>
+              </tr>
+              <tr>
+                <th className="px-3 py-2 font-medium text-slate-700">Fecha y Hora Local</th>
+                <td className="px-3 py-2 text-slate-800 tabular-nums">
+                  {new Date(emittedAt).toLocaleString('es-CL')}
+                </td>
+              </tr>
+              <tr>
+                <th className="px-3 py-2 font-medium text-slate-700">Usuario Emisor</th>
+                <td className="px-3 py-2 text-slate-800">
+                  {issuerName} ({issuerEmail})
+                </td>
+              </tr>
+              <tr>
+                <th className="px-3 py-2 font-medium text-slate-700">Rol del Emisor</th>
+                <td className="px-3 py-2 text-slate-800">{issuerRole}</td>
+              </tr>
+              <tr>
+                <th className="px-3 py-2 font-medium text-slate-700">
+                  Estado General de la Plataforma
+                </th>
+                <td className="px-3 py-2 font-semibold text-slate-900">{platformStatus}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* ==================== b) RESUMEN POR INSTALACIÓN ==================== */}
-      <section aria-label="Resumen operativo por instalación">
-        <h3>b) Resumen Operativo por Instalación</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>ID Sistema</th>
-              <th>Nombre</th>
-              <th>Ubicación (Descifrada)</th>
-              <th>Cultivos Asociados</th>
-              <th>Sensores Instalados</th>
-              <th>Estado de Conexión</th>
-              <th>Última Comunicación</th>
-            </tr>
-          </thead>
-          <tbody>
-            {installSummary.length === 0 ? (
-              <tr>
-                <td colSpan={7}>No existen instalaciones registradas.</td>
+      <section
+        aria-label="Resumen operativo por instalación"
+        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+      >
+        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
+          b) Resumen Operativo por Instalación
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                <th className="px-3 py-2">ID Sistema</th>
+                <th className="px-3 py-2">Nombre</th>
+                <th className="px-3 py-2">Ubicación (Descifrada)</th>
+                <th className="px-3 py-2 text-right">Cultivos</th>
+                <th className="px-3 py-2 text-right">Sensores</th>
+                <th className="px-3 py-2">Estado Conexión</th>
+                <th className="px-3 py-2">Última Comunicación</th>
               </tr>
-            ) : (
-              installSummary.map((inst) => (
-                <tr key={inst.id}>
-                  <td>
-                    <code>{inst.id_sistema}</code>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {installSummary.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                    No existen instalaciones registradas.
                   </td>
-                  <td>{inst.nombre}</td>
-                  <td>{inst.ubicacion_descifrada ?? ''}</td>
-                  <td>{inst.cantidadCultivos}</td>
-                  <td>{inst.cantidadSensores}</td>
-                  <td>{inst.estado_conexion}</td>
-                  <td>{inst.ultima_comunicacion}</td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                installSummary.map((inst) => (
+                  <tr key={inst.id}>
+                    <td className="px-3 py-2 font-mono text-xs font-medium text-slate-900">
+                      {inst.id_sistema}
+                    </td>
+                    <td className="px-3 py-2 text-slate-800">{inst.nombre}</td>
+                    <td className="px-3 py-2 text-slate-700">
+                      {inst.ubicacion_descifrada ?? ''}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium tabular-nums">
+                      {inst.cantidadCultivos}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium tabular-nums">
+                      {inst.cantidadSensores}
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">{inst.estado_conexion}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-slate-500 tabular-nums">
+                      {inst.ultima_comunicacion}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* ==================== c) ESTADÍSTICAS POR VARIABLE ==================== */}
-      <section aria-label="Estadísticas por variable monitoreada">
-        <h3>c) Estadísticas por Variable Monitoreada</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Variable Monitoreada</th>
-              <th>Total Mediciones</th>
-              <th>Valor Mínimo</th>
-              <th>Valor Máximo</th>
-              <th>Valor Promedio</th>
-              <th>Mediciones Fuera de Umbral</th>
-            </tr>
-          </thead>
-          <tbody>
-            {variableStats.map((stat) => (
-              <tr key={stat.variable}>
-                <td>
-                  <code>{stat.variable}</code>
-                </td>
-                <td>{stat.total}</td>
-                <td>{stat.min}</td>
-                <td>{stat.max}</td>
-                <td>{stat.promedio}</td>
-                <td>{stat.fueraUmbral}</td>
+      <section
+        aria-label="Estadísticas por variable monitoreada"
+        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+      >
+        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
+          c) Estadísticas por Variable Monitoreada
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                <th className="px-3 py-2">Variable Monitoreada</th>
+                <th className="px-3 py-2 text-right">Total Mediciones</th>
+                <th className="px-3 py-2 text-right">Valor Mínimo</th>
+                <th className="px-3 py-2 text-right">Valor Máximo</th>
+                <th className="px-3 py-2 text-right">Valor Promedio</th>
+                <th className="px-3 py-2 text-right">Fuera de Umbral</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100 tabular-nums">
+              {variableStats.map((stat) => (
+                <tr key={stat.variable}>
+                  <td className="px-3 py-2 font-mono text-xs font-medium text-slate-900">
+                    {stat.variable}
+                  </td>
+                  <td className="px-3 py-2 text-right">{stat.total}</td>
+                  <td className="px-3 py-2 text-right">{stat.min}</td>
+                  <td className="px-3 py-2 text-right">{stat.max}</td>
+                  <td className="px-3 py-2 text-right font-medium text-slate-900">
+                    {stat.promedio}
+                  </td>
+                  <td className="px-3 py-2 text-right">{stat.fueraUmbral}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* ==================== d) INDICADORES DE ALERTAS ==================== */}
-      <section aria-label="Indicadores de gestión de alertas">
-        <h3>d) Indicadores de Gestión de Alertas</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Total Histórico de Alertas</th>
-              <th>Alertas Activas</th>
-              <th>Alertas Resueltas</th>
-              <th>Tasa Porcentual de Resolución (%)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>{alertIndicators.total}</td>
-              <td>{alertIndicators.activas}</td>
-              <td>{alertIndicators.resueltas}</td>
-              <td>{alertIndicators.tasaResolucion}%</td>
-            </tr>
-          </tbody>
-        </table>
+      <section
+        aria-label="Indicadores de gestión de alertas"
+        className="print-break-inside-avoid rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+      >
+        <h3 className="mb-3 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
+          d) Indicadores de Gestión de Alertas
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm tabular-nums">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                <th className="px-3 py-2 text-right">Total Histórico de Alertas</th>
+                <th className="px-3 py-2 text-right">Alertas Activas</th>
+                <th className="px-3 py-2 text-right">Alertas Resueltas</th>
+                <th className="px-3 py-2 text-right">Tasa Porcentual de Resolución (%)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="px-3 py-2.5 text-right font-medium">{alertIndicators.total}</td>
+                <td className="px-3 py-2.5 text-right font-medium text-amber-700">
+                  {alertIndicators.activas}
+                </td>
+                <td className="px-3 py-2.5 text-right font-medium text-emerald-700">
+                  {alertIndicators.resueltas}
+                </td>
+                <td className="px-3 py-2.5 text-right font-semibold text-slate-900">
+                  {alertIndicators.tasaResolucion}%
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* ==================== e) SEGURIDAD Y AUDITORÍA ==================== */}
-      <section aria-label="Resumen de seguridad y auditoría">
-        <h3>e) Resumen de Seguridad y Auditoría</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Métrica de Seguridad</th>
-              <th>Resultado</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <th>Total de Eventos en audit_logs</th>
-              <td>{securityBreakdown.totalEvents}</td>
-            </tr>
-            <tr>
-              <th>Mediciones Verificadas Criptográficamente sin Alteraciones</th>
-              <td>
-                <strong>
+      <section
+        aria-label="Resumen de seguridad y auditoría"
+        className="print-break-inside-avoid space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+      >
+        <h3 className="flex items-center gap-2 border-b border-slate-100 pb-2 text-base font-semibold text-slate-900">
+          <ShieldCheck className="h-4 w-4 text-emerald-600" strokeWidth={1.75} />
+          e) Resumen de Seguridad y Auditoría
+        </h3>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                <th className="px-3 py-2">Métrica de Seguridad</th>
+                <th className="px-3 py-2">Resultado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 tabular-nums">
+              <tr>
+                <th className="px-3 py-2 font-medium text-slate-700">
+                  Total de Eventos en audit_logs
+                </th>
+                <td className="px-3 py-2 font-semibold text-slate-900">
+                  {securityBreakdown.totalEvents}
+                </td>
+              </tr>
+              <tr>
+                <th className="px-3 py-2 font-medium text-slate-700">
+                  Mediciones Verificadas Criptográficamente sin Alteraciones
+                </th>
+                <td className="px-3 py-2 font-semibold text-emerald-800">
                   {securityBreakdown.integrityPct}% ({integrityCounts.valid} /{' '}
                   {integrityCounts.total})
-                </strong>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <h4>Desglose de Operaciones Críticas en audit_logs</h4>
-        <table>
-          <thead>
-            <tr>
-              <th>Acción Auditada</th>
-              <th>Cantidad</th>
-            </tr>
-          </thead>
-          <tbody>
-            {securityBreakdown.counts.length === 0 ? (
-              <tr>
-                <td colSpan={2}>Sin eventos registrados todavía.</td>
+                </td>
               </tr>
-            ) : (
-              securityBreakdown.counts.map(([action, count]) => (
-                <tr key={action}>
-                  <td>
-                    <code>{action}</code>
-                  </td>
-                  <td>{count}</td>
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <h4 className="mb-2 text-sm font-semibold text-slate-800">
+            Desglose de Operaciones Críticas en audit_logs
+          </h4>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                  <th className="px-3 py-2">Acción Auditada</th>
+                  <th className="px-3 py-2 text-right">Cantidad</th>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100 tabular-nums">
+                {securityBreakdown.counts.length === 0 ? (
+                  <tr>
+                    <td colSpan={2} className="px-3 py-4 text-center text-slate-500">
+                      Sin eventos registrados todavía.
+                    </td>
+                  </tr>
+                ) : (
+                  securityBreakdown.counts.map(([action, count]) => (
+                    <tr key={action}>
+                      <td className="px-3 py-2 font-mono text-xs text-slate-800">{action}</td>
+                      <td className="px-3 py-2 text-right font-medium text-slate-900">{count}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
     </section>
   );
