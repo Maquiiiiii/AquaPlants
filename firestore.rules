@@ -1,0 +1,103 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserProfile() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function hasRole(roleName) {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && getUserProfile().data.rol == roleName;
+    }
+
+    function isAdmin() {
+      return hasRole('Administrador');
+    }
+
+    function isValidRole(roleName) {
+      return roleName in ['Administrador', 'Supervisor', 'Encargado de cultivo'];
+    }
+
+    // Colección de perfiles de usuario (RBAC)
+    match /usuarios/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+
+      allow create: if isAuthenticated()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll(['uid', 'nombre', 'email', 'rol', 'fecha_creacion'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.nombre is string
+        && request.resource.data.nombre.size() > 0
+        && request.resource.data.email is string
+        && isValidRole(request.resource.data.rol)
+        && request.resource.data.fecha_creacion is string;
+
+      // Solo Administrador puede modificar roles; un usuario propio no puede auto-escalar privilegios
+      allow update: if isAdmin()
+        || (isAuthenticated()
+          && request.auth.uid == userId
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['rol', 'uid']));
+
+      allow delete: if isAdmin();
+    }
+
+    // Bitácora de auditoría inmutable: solo lectura y creación autenticada, jamás update ni delete
+    match /audit_logs/{logId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasAll([
+          'uid',
+          'email',
+          'rol',
+          'accion',
+          'detalle',
+          'timestamp',
+          'hash_evento'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email is string
+        && request.resource.data.rol is string
+        && request.resource.data.accion is string
+        && request.resource.data.detalle is string
+        && request.resource.data.timestamp is string
+        && request.resource.data.hash_evento is string
+        && request.resource.data.hash_evento.size() == 64;
+
+      allow update, delete: if false;
+    }
+
+    // Configuraciones críticas del ecosistema AquaPlants / AquaBrain: escritura exclusiva de Administrador
+    match /configuraciones/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /umbrales_alerta/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /instalaciones/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /dispositivos/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Denegar cualquier otra ruta por defecto (principio de mínimo privilegio)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
