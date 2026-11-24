@@ -9,7 +9,7 @@ Plataforma web full-stack serverless para el monitoreo, gestión operativa, tele
 
 - **Frontend:** React 19 + Vite 8 + TypeScript (modo estricto `"strict": true`)
 - **Estilos e Iconografía:** Tailwind CSS v4 (`@tailwindcss/vite`), `lucide-react` y estilos `@media print` dedicados para exportación PDF
-- **Visualización:** `recharts` (`ResponsiveContainer`, `LineChart`, `ReferenceLine`)
+- **Visualización:** `recharts` (`ResponsiveContainer`, `AreaChart`, `ReferenceArea`)
 - **Backend / Nube:** Firebase v13+ (Firebase Authentication, Cloud Firestore, Firebase Hosting)
 
 ## Arquitectura Funcional (Módulos Implementados)

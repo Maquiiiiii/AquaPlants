@@ -13,7 +13,10 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
-import { subscribeAuditLogs } from '../security/auditService';
+import {
+  subscribeAuditLogs,
+  subscribeLocalAuditEvents,
+} from '../security/auditService';
 import { subscribeInstalaciones } from '../services/crudService';
 import { calcularHashIntegridad, subscribeMediciones } from '../services/iotService';
 import type { AuditLogEntry, UserProfile } from '../types/auth';
@@ -100,7 +103,8 @@ function getActionBadgeClass(accion: string): string {
 }
 
 export default function SecurityAudit({ profile }: SecurityAuditProps) {
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [cloudLogs, setCloudLogs] = useState<AuditLogEntry[]>([]);
+  const [localLogs, setLocalLogs] = useState<AuditLogEntry[]>([]);
   const [instalaciones, setInstalaciones] = useState<Instalacion[]>([]);
   const [mediciones, setMediciones] = useState<Medicion[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -112,16 +116,36 @@ export default function SecurityAudit({ profile }: SecurityAuditProps) {
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   useEffect(() => {
-    const unsubLog = subscribeAuditLogs(null, setAuditLogs, setStreamError);
+    const unsubLog = subscribeAuditLogs(null, setCloudLogs, setStreamError);
+    const unsubLocal = subscribeLocalAuditEvents(setLocalLogs);
     const unsubInst = subscribeInstalaciones(setInstalaciones, setStreamError);
     const unsubMed = subscribeMediciones(null, setMediciones, setStreamError);
 
     return () => {
       unsubLog();
+      unsubLocal();
       unsubInst();
       unsubMed();
     };
   }, []);
+
+  const { auditLogs, localOnlyIds } = useMemo(() => {
+    const cloudIds = new Set(cloudLogs.map((l) => l.id));
+    const cloudHashes = new Set(cloudLogs.map((l) => l.hash_evento));
+    const merged: AuditLogEntry[] = [...cloudLogs];
+    const localIds = new Set<string>();
+
+    for (const local of localLogs) {
+      const localKey = local.id ?? local.hash_evento;
+      if ((!local.id || !cloudIds.has(local.id)) && !cloudHashes.has(local.hash_evento)) {
+        merged.push(local);
+        localIds.add(localKey);
+      }
+    }
+
+    merged.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    return { auditLogs: merged, localOnlyIds: localIds };
+  }, [cloudLogs, localLogs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -533,13 +557,20 @@ export default function SecurityAudit({ profile }: SecurityAuditProps) {
                       {formatEditorialDateTime(log.timestamp)}
                     </td>
                     <td className="px-5 py-3">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getActionBadgeClass(
-                          log.accion,
-                        )}`}
-                      >
-                        {ACTION_LABELS[log.accion] ?? log.accion}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getActionBadgeClass(
+                            log.accion,
+                          )}`}
+                        >
+                          {ACTION_LABELS[log.accion] ?? log.accion}
+                        </span>
+                        {localOnlyIds.has(log.id ?? log.hash_evento) && (
+                          <span className="inline-flex rounded-full bg-[#F3E5D8] px-2 py-0.5 text-[10px] font-semibold text-[#5C3419]">
+                            Buffer local
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="truncate px-5 py-3 text-xs text-slate-700">
                       <span className="font-medium text-slate-900">{log.email}</span>
