@@ -1,10 +1,69 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Briefcase, Lock, Mail, ShieldCheck, User } from 'lucide-react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
+import {
+  ArrowRight,
+  Clover,
+  Flower2,
+  Leaf,
+  Loader2,
+  Sprout,
+  TreePine,
+  Trees,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { subscribeLocalAuditEvents } from '../security/auditService';
 import { USER_ROLES, type AuditLogEntry, type UserRole } from '../types/auth';
 
-type AuthMode = 'login' | 'register';
+type AuthView = 'login' | 'register';
+
+interface BotanicalItem {
+  id: number;
+  xPct: number;
+  yPct: number;
+  size: number;
+  baseRotate: number;
+  iconIndex: number;
+}
+
+const BOTANICAL_ICONS = [
+  Sprout,
+  Leaf,
+  Flower2,
+  Trees,
+  Clover,
+  TreePine,
+] as const;
+
+// 20 iconos en grilla 5x4 con desplazamiento orgánico determinista
+const BOTANICAL_ITEMS: BotanicalItem[] = Array.from({ length: 20 }, (_, i) => {
+  const col = i % 5;
+  const row = Math.floor(i / 5);
+  const hashA = Math.sin((i + 1) * 12.9898) * 43758.5453;
+  const randA = hashA - Math.floor(hashA);
+  const hashB = Math.sin((i + 1) * 78.233) * 19341.1234;
+  const randB = hashB - Math.floor(hashB);
+
+  const cellW = 100 / 5;
+  const cellH = 100 / 4;
+  const xPct = col * cellW + 5 + randA * (cellW - 10);
+  const yPct = row * cellH + 6 + randB * (cellH - 12);
+  const size = Math.round(20 + ((i * 7) % 19)); // 20px - 38px
+  const baseRotate = Math.round(((randA - 0.5) * 56) + ((i % 2 === 0 ? 1 : -1) * 8));
+
+  return {
+    id: i,
+    xPct,
+    yPct,
+    size,
+    baseRotate,
+    iconIndex: i % BOTANICAL_ICONS.length,
+  };
+});
 
 export default function AuthScreen() {
   const {
@@ -16,7 +75,7 @@ export default function AuthScreen() {
     clearAuthError,
   } = useAuth();
 
-  const [mode, setMode] = useState<AuthMode>('login');
+  const [view, setView] = useState<AuthView>('login');
 
   // Estado Login
   const [loginEmail, setLoginEmail] = useState('');
@@ -33,755 +92,520 @@ export default function AuthScreen() {
   const [uiMessage, setUiMessage] = useState<string | null>(null);
   const [localAuditLogs, setLocalAuditLogs] = useState<AuditLogEntry[]>([]);
 
+  // Referencias para física de repulsión a 60 FPS sin re-renders
+  const rightPanelRef = useRef<HTMLElement | null>(null);
+  const iconRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const pointerRef = useRef<{ x: number; y: number; active: boolean }>({
+    x: 0,
+    y: 0,
+    active: false,
+  });
+  const physicsRef = useRef(
+    BOTANICAL_ITEMS.map((item) => ({
+      x: 0,
+      y: 0,
+      rot: item.baseRotate,
+    }))
+  );
+
   useEffect(() => {
     return subscribeLocalAuditEvents(setLocalAuditLogs);
   }, []);
 
-  function switchMode(nextMode: AuthMode) {
-    if (nextMode === mode) return;
+  useEffect(() => {
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (prefersReducedMotion) {
+      BOTANICAL_ITEMS.forEach((item, idx) => {
+        const el = iconRefs.current[idx];
+        if (el) {
+          el.style.transform = `translate3d(0px, 0px, 0) rotate(${item.baseRotate}deg)`;
+        }
+      });
+      return;
+    }
+
+    const INFLUENCE_RADIUS = 148;
+    const MAX_DISPLACEMENT = 36;
+    const LERP_FACTOR = 0.1;
+    let rafId = 0;
+
+    const tick = () => {
+      const container = rightPanelRef.current;
+      if (container) {
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        const pointer = pointerRef.current;
+
+        for (let i = 0; i < BOTANICAL_ITEMS.length; i++) {
+          const item = BOTANICAL_ITEMS[i];
+          const state = physicsRef.current[i];
+          const el = iconRefs.current[i];
+          if (!el) continue;
+
+          let targetX = 0;
+          let targetY = 0;
+          let targetRot = item.baseRotate;
+
+          if (pointer.active && width > 0 && height > 0) {
+            const originX = (item.xPct / 100) * width;
+            const originY = (item.yPct / 100) * height;
+            const dx = originX - pointer.x;
+            const dy = originY - pointer.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist < INFLUENCE_RADIUS) {
+              const force = (INFLUENCE_RADIUS - dist) / INFLUENCE_RADIUS;
+              const easedForce = force * force;
+              const normX = dist > 0.001 ? dx / dist : 1;
+              const normY = dist > 0.001 ? dy / dist : 0;
+
+              targetX = normX * MAX_DISPLACEMENT * easedForce;
+              targetY = normY * MAX_DISPLACEMENT * easedForce;
+              targetRot = item.baseRotate + normX * 16 * easedForce;
+            }
+          }
+
+          state.x += (targetX - state.x) * LERP_FACTOR;
+          state.y += (targetY - state.y) * LERP_FACTOR;
+          state.rot += (targetRot - state.rot) * LERP_FACTOR;
+
+          if (Math.abs(state.x) < 0.01) state.x = 0;
+          if (Math.abs(state.y) < 0.01) state.y = 0;
+
+          el.style.transform = `translate3d(${state.x.toFixed(2)}px, ${state.y.toFixed(2)}px, 0) rotate(${state.rot.toFixed(2)}deg)`;
+        }
+      }
+
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  const handlePanelMouseMove = (e: ReactMouseEvent<HTMLElement>) => {
+    const container = rightPanelRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    pointerRef.current.x = e.clientX - rect.left;
+    pointerRef.current.y = e.clientY - rect.top;
+    pointerRef.current.active = true;
+  };
+
+  const handlePanelMouseLeave = () => {
+    pointerRef.current.active = false;
+  };
+
+  const switchView = (nextView: AuthView) => {
+    if (nextView === view) return;
     clearAuthError();
     setUiMessage(null);
-    setMode(nextMode);
-  }
+    setView(nextView);
+  };
 
-  async function handleLoginSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const handleLoginSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
     clearAuthError();
     setUiMessage(null);
     setLoginSubmitting(true);
     try {
       await login(loginEmail, loginPassword);
-      setLoginPassword('');
-      setUiMessage('Sesión iniciada correctamente.');
-    } catch {
-      // El error queda expuesto en authError desde AuthContext
     } finally {
       setLoginSubmitting(false);
     }
-  }
+  };
 
-  async function handleRegisterSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const handleRegisterSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
     clearAuthError();
     setUiMessage(null);
     setRegSubmitting(true);
     try {
       await register(regNombre, regEmail, regPassword, regRol);
+      setUiMessage('Cuenta creada correctamente. Sesión iniciada.');
+      setRegNombre('');
+      setRegEmail('');
       setRegPassword('');
-      setUiMessage('Usuario registrado y perfil RBAC almacenado en Firestore.');
-    } catch {
-      // El error queda expuesto en authError desde AuthContext
     } finally {
       setRegSubmitting(false);
     }
-  }
+  };
 
   return (
-    <main className="auth-font relative min-h-screen overflow-hidden bg-[#00753A] px-4 py-8 text-[#F2F0EC] sm:px-8 sm:py-10">
-      {/* Decoración botánica inferior de fondo */}
-      <svg
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-48 w-full"
-        viewBox="0 0 1280 200"
-        preserveAspectRatio="none"
-        fill="none"
-        aria-hidden="true"
+    <main className="m-0 grid h-screen w-screen grid-cols-1 overflow-hidden rounded-none bg-white p-0 text-slate-900 lg:grid-cols-2">
+      {/* Mitad izquierda (50%): Fotografía de personas con plantas e identidad #00753A */}
+      <aside className="order-1 relative hidden h-full w-full flex-col justify-between overflow-hidden bg-[#00753A] p-10 text-[#F2F0EC] lg:flex lg:p-14">
+        <img
+          src="/imagenes/background.jpg"
+          alt="Equipo AquaPlants junto a cultivos aeropónicos"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-gradient-to-t from-[#00753A]/95 via-[#00753A]/35 to-[#00753A]/25"
+        />
+
+        <div className="relative z-10">
+          <img
+            src="/LogoAquaSVG.svg"
+            alt="AquaPlants"
+            className="h-9 w-auto"
+          />
+        </div>
+
+        <div className="relative z-10 max-w-lg space-y-2.5">
+          <h2 className="text-3xl font-bold leading-tight text-[#F2F0EC] xl:text-4xl">
+            Cultiva el futuro con AquaPlants
+          </h2>
+          <p className="text-base leading-relaxed text-[#F2F0EC]/90">
+            Monitoreo inteligente y gestión eficiente para tus cultivos aeropónicos.
+          </p>
+        </div>
+      </aside>
+
+      {/* Mitad derecha (50%): Fondo interactivo botánico + Formulario */}
+      <section
+        ref={rightPanelRef}
+        onMouseMove={handlePanelMouseMove}
+        onMouseLeave={handlePanelMouseLeave}
+        aria-label={view === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
+        className="order-2 relative flex h-full w-full flex-col items-center justify-center overflow-hidden bg-white px-8 py-8 lg:px-16"
       >
-        <g stroke="#52B882" strokeWidth="2" opacity="0.42">
-          <path d="M0 170C200 130 380 185 560 160M720 175C900 140 1080 180 1280 155" />
-          <path
-            transform="translate(30 200) rotate(-18) scale(1.5)"
-            d="M0 0C14-28 14-62 0-90-14-62-14-28 0 0Z"
-          />
-          <path
-            transform="translate(95 200) rotate(14) scale(1.1)"
-            d="M0 0C14-28 14-62 0-90-14-62-14-28 0 0Z"
-          />
-          <path
-            transform="translate(1185 200) rotate(-12) scale(1.4)"
-            d="M0 0C14-28 14-62 0-90-14-62-14-28 0 0Z"
-          />
-          <path
-            transform="translate(1245 200) rotate(16) scale(1.0)"
-            d="M0 0C14-28 14-62 0-90-14-62-14-28 0 0Z"
-          />
-        </g>
-      </svg>
-
-      <div className="relative z-10 mx-auto max-w-[1160px] space-y-6">
-        {/* Cabecera superior con LogoAquaSVG */}
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-4 sm:gap-5">
-            <img
-              src="/LogoAquaSVG.svg"
-              alt="AquaPlants"
-              className="block h-auto w-[185px] sm:w-[230px]"
-            />
-            <span
-              className="hidden h-7 w-px bg-[#F2F0EC]/45 sm:inline-block"
-              aria-hidden="true"
-            />
-            <p className="text-sm font-medium text-[#F2F0EC]">
-              Monitoreo de Cultivos Aeropónicos
-            </p>
-          </div>
-
-          <div className="inline-flex items-center gap-2 rounded-full bg-[#0D3B24]/35 px-3.5 py-1.5 text-xs font-semibold text-[#F2F0EC] ring-1 ring-inset ring-[#F2F0EC]/25 lg:hidden">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                isConfigured ? 'aqua-dot-pulse bg-[#34D399]' : 'bg-[#E6A608]'
-              }`}
-            />
-            {isConfigured ? 'Firebase Cloud Conectado' : 'Entorno Pendiente'}
-          </div>
-        </header>
-
-        {!isConfigured && configError && (
-          <section
-            aria-live="polite"
-            className="rounded-2xl border border-[#E6A608]/50 bg-[#0D3B24]/70 px-5 py-4 text-sm text-[#F2F0EC]"
-          >
-            <h2 className="font-bold text-[#E6A608]">Configuración de Entorno Pendiente</h2>
-            <p role="alert" className="mt-1">
-              {configError}
-            </p>
-            <p className="mt-1 text-xs text-[#F2F0EC]/80">
-              Crea un archivo <code className="font-mono">.env</code> basado en{' '}
-              <code className="font-mono">.env.example</code> para habilitar Firebase Authentication
-              y Cloud Firestore.
-            </p>
-          </section>
-        )}
-
-        {/* Tarjeta principal centrada (Solo un formulario visible a la vez) */}
-        <div className="flex flex-col overflow-hidden rounded-[24px] shadow-[0_24px_50px_rgba(0,50,25,0.28)] lg:min-h-[632px] lg:flex-row">
-          {/* Panel izquierdo: Formulario único con transición */}
-          <section
-            aria-label={mode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
-            className="flex w-full flex-col justify-center gap-5 bg-[#FAF6EE] px-6 py-8 text-[#14261C] sm:px-12 sm:py-10 lg:w-[540px] lg:shrink-0"
-          >
-            <h1 className="text-[28px] font-extrabold tracking-[-0.01em] text-[#14261C] sm:text-[32px]">
-              {mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
-            </h1>
-
-            {/* Selector tipo pill de la referencia */}
-            <div
-              role="tablist"
-              aria-label="Modo de acceso"
-              className="flex gap-1 rounded-[15px] bg-[#EDE7D9] p-1"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === 'login'}
-                onClick={() => switchMode('login')}
-                className={`auth-tab ${mode === 'login' ? 'auth-tab-active' : ''}`}
+        {/* Capa de iconos botánicos con repulsión fluida */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+        >
+          {BOTANICAL_ITEMS.map((item, idx) => {
+            const IconComponent = BOTANICAL_ICONS[item.iconIndex];
+            return (
+              <div
+                key={item.id}
+                ref={(el) => {
+                  iconRefs.current[idx] = el;
+                }}
+                style={{
+                  left: `${item.xPct}%`,
+                  top: `${item.yPct}%`,
+                  transform: `translate3d(0px, 0px, 0) rotate(${item.baseRotate}deg)`,
+                  willChange: 'transform',
+                }}
+                className="absolute -translate-x-1/2 -translate-y-1/2 text-slate-200/80"
               >
-                Iniciar Sesión
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === 'register'}
-                onClick={() => switchMode('register')}
-                className={`auth-tab ${mode === 'register' ? 'auth-tab-active' : ''}`}
-              >
-                Crear Cuenta
-              </button>
-            </div>
-
-            {(authError || uiMessage) && (
-              <div aria-live="polite">
-                {authError && (
-                  <p
-                    role="alert"
-                    className="rounded-[12px] border border-red-300 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-800"
-                  >
-                    {authError}
-                  </p>
-                )}
-                {uiMessage && (
-                  <p className="rounded-[12px] border border-emerald-300 bg-emerald-50 px-3.5 py-2.5 text-xs font-medium text-emerald-900">
-                    {uiMessage}
-                  </p>
-                )}
+                <IconComponent size={item.size} strokeWidth={1.6} />
               </div>
-            )}
+            );
+          })}
+        </div>
 
-            {mode === 'login' ? (
-              <form
-                key="login-form"
-                onSubmit={handleLoginSubmit}
-                className="auth-fade-slide flex flex-col gap-5"
+        <div className="relative z-10 w-full max-w-md rounded-2xl bg-white/80 p-6 sm:p-8">
+          {!isConfigured && configError && (
+            <section
+              aria-live="polite"
+              className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900"
+            >
+              <p className="font-semibold">Configuración de entorno pendiente</p>
+              <p role="alert" className="mt-0.5">
+                {configError}
+              </p>
+            </section>
+          )}
+
+          {(authError || uiMessage) && (
+            <div aria-live="polite" className="mb-4">
+              {authError && (
+                <p
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700"
+                >
+                  {authError}
+                </p>
+              )}
+              {uiMessage && (
+                <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-medium text-emerald-800">
+                  {uiMessage}
+                </p>
+              )}
+            </div>
+          )}
+
+          {view === 'login' ? (
+            <div key="login-view">
+              <header
+                className="auth-stagger-rise mb-8"
+                style={{ animationDelay: '0ms' }}
               >
-                <div>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-[28px]">
+                  Iniciar Sesión
+                </h1>
+                <p className="mt-2 text-sm text-slate-500">
+                  ¡Qué bueno verte de vuelta en AquaPlants!
+                </p>
+              </header>
+
+              <form onSubmit={handleLoginSubmit} className="space-y-5">
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '45ms' }}
+                >
                   <label
                     htmlFor="login-email"
-                    className="mb-2 ml-0.5 block text-[13px] font-semibold text-[#14261C]"
+                    className="mb-2 block text-xs font-semibold text-slate-700"
                   >
                     Correo electrónico
                   </label>
-                  <div className="auth-field">
-                    <Mail className="auth-field-icon h-[18px] w-[18px]" strokeWidth={2} />
-                    <input
-                      id="login-email"
-                      name="email"
-                      type="email"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      required
-                      autoComplete="email"
-                      placeholder="operador@aquaplants.cl"
-                      className="auth-input"
-                    />
-                  </div>
+                  <input
+                    id="login-email"
+                    name="email"
+                    type="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    required
+                    autoComplete="email"
+                    placeholder="operador@aquaplants.cl"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
+                  />
                 </div>
 
-                <div>
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '90ms' }}
+                >
                   <label
                     htmlFor="login-password"
-                    className="mb-2 ml-0.5 block text-[13px] font-semibold text-[#14261C]"
+                    className="mb-2 block text-xs font-semibold text-slate-700"
                   >
                     Contraseña
                   </label>
-                  <div className="auth-field">
-                    <Lock className="auth-field-icon h-[18px] w-[18px]" strokeWidth={2} />
-                    <input
-                      id="login-password"
-                      name="password"
-                      type="password"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      minLength={8}
-                      required
-                      autoComplete="current-password"
-                      placeholder="Mínimo 8 caracteres"
-                      className="auth-input"
-                    />
-                  </div>
+                  <input
+                    id="login-password"
+                    name="password"
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    minLength={8}
+                    required
+                    autoComplete="current-password"
+                    placeholder="Mínimo 8 caracteres"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
+                  />
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={loginSubmitting || !isConfigured}
-                  className="auth-cta mt-1 w-full"
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '140ms' }}
                 >
-                  {loginSubmitting ? 'Validando acceso...' : 'Ingresar a la Plataforma'}
-                </button>
-
-                <p className="pt-1 text-center text-sm text-[#45564C]">
-                  ¿No tienes cuenta?{' '}
                   <button
-                    type="button"
-                    onClick={() => switchMode('register')}
-                    className="font-bold text-[#00753A] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[#E6A608]"
+                    type="submit"
+                    disabled={loginSubmitting || !isConfigured}
+                    className="group relative mt-7 flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg bg-gradient-to-r from-[#F7C224] via-[#EEAD0E] to-[#E29C06] py-3.5 text-sm font-semibold leading-none text-slate-950 shadow-[0_8px_20px_-4px_rgba(230,166,8,0.42),inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:brightness-[1.03] hover:shadow-[0_12px_24px_-4px_rgba(230,166,8,0.52),inset_0_1px_0_rgba(255,255,255,0.6)] active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Crear cuenta
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/35 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-full"
+                    />
+                    <span className="relative z-10">
+                      {loginSubmitting ? 'Validando acceso...' : 'Iniciar Sesión'}
+                    </span>
+                    {loginSubmitting ? (
+                      <Loader2 className="relative z-10 h-4 w-4 shrink-0 animate-spin" />
+                    ) : (
+                      <ArrowRight className="relative z-10 h-4 w-4 shrink-0 translate-y-[0.5px] transition-transform duration-200 group-hover:translate-x-1" />
+                    )}
                   </button>
-                </p>
+                </div>
               </form>
-            ) : (
-              <form
-                key="register-form"
-                onSubmit={handleRegisterSubmit}
-                className="auth-fade-slide flex flex-col gap-4"
+
+              <p
+                className="auth-stagger-rise mt-7 text-center text-sm text-slate-600"
+                style={{ animationDelay: '140ms' }}
               >
-                <div>
+                ¿Nuevo en AquaPlants?{' '}
+                <button
+                  type="button"
+                  onClick={() => switchView('register')}
+                  className="font-semibold text-[#00753A] hover:underline"
+                >
+                  Crear cuenta
+                </button>
+              </p>
+            </div>
+          ) : (
+            <div key="register-view">
+              <header
+                className="auth-stagger-rise mb-8"
+                style={{ animationDelay: '0ms' }}
+              >
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-[28px]">
+                  Crear Cuenta
+                </h1>
+                <p className="mt-2 text-sm text-slate-500">
+                  ¡Únete al ecosistema de cultivos aeropónicos!
+                </p>
+              </header>
+
+              <form onSubmit={handleRegisterSubmit} className="space-y-5">
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '45ms' }}
+                >
                   <label
                     htmlFor="reg-nombre"
-                    className="mb-1.5 ml-0.5 block text-[13px] font-semibold text-[#14261C]"
+                    className="mb-2 block text-xs font-semibold text-slate-700"
                   >
                     Nombre completo
                   </label>
-                  <div className="auth-field">
-                    <User className="auth-field-icon h-[18px] w-[18px]" strokeWidth={2} />
-                    <input
-                      id="reg-nombre"
-                      name="nombre"
-                      type="text"
-                      value={regNombre}
-                      onChange={(e) => setRegNombre(e.target.value)}
-                      required
-                      autoComplete="name"
-                      placeholder="Nombre y apellido"
-                      className="auth-input"
-                    />
-                  </div>
+                  <input
+                    id="reg-nombre"
+                    name="nombre"
+                    type="text"
+                    value={regNombre}
+                    onChange={(e) => setRegNombre(e.target.value)}
+                    required
+                    autoComplete="name"
+                    placeholder="Nombre y apellido"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
+                  />
                 </div>
 
-                <div>
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '90ms' }}
+                >
                   <label
                     htmlFor="reg-email"
-                    className="mb-1.5 ml-0.5 block text-[13px] font-semibold text-[#14261C]"
+                    className="mb-2 block text-xs font-semibold text-slate-700"
                   >
                     Correo electrónico
                   </label>
-                  <div className="auth-field">
-                    <Mail className="auth-field-icon h-[18px] w-[18px]" strokeWidth={2} />
-                    <input
-                      id="reg-email"
-                      name="email"
-                      type="email"
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      required
-                      autoComplete="email"
-                      placeholder="usuario@aquaplants.cl"
-                      className="auth-input"
-                    />
-                  </div>
+                  <input
+                    id="reg-email"
+                    name="email"
+                    type="email"
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    required
+                    autoComplete="email"
+                    placeholder="usuario@aquaplants.cl"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
+                  />
                 </div>
 
-                <div>
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '135ms' }}
+                >
                   <label
                     htmlFor="reg-password"
-                    className="mb-1.5 ml-0.5 block text-[13px] font-semibold text-[#14261C]"
+                    className="mb-2 block text-xs font-semibold text-slate-700"
                   >
-                    Contraseña (mínimo 8 caracteres)
+                    Contraseña
                   </label>
-                  <div className="auth-field">
-                    <Lock className="auth-field-icon h-[18px] w-[18px]" strokeWidth={2} />
-                    <input
-                      id="reg-password"
-                      name="password"
-                      type="password"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      minLength={8}
-                      required
-                      autoComplete="new-password"
-                      placeholder="Mínimo 8 caracteres"
-                      className="auth-input"
-                    />
-                  </div>
+                  <input
+                    id="reg-password"
+                    name="password"
+                    type="password"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    minLength={8}
+                    required
+                    autoComplete="new-password"
+                    placeholder="Mínimo 8 caracteres"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400/80 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
+                  />
                 </div>
 
-                <div>
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '180ms' }}
+                >
                   <label
                     htmlFor="reg-rol"
-                    className="mb-1.5 ml-0.5 block text-[13px] font-semibold text-[#14261C]"
+                    className="mb-2 block text-xs font-semibold text-slate-700"
                   >
-                    Rol RBAC
+                    Perfil de usuario
                   </label>
-                  <div className="auth-field">
-                    <Briefcase className="auth-field-icon h-[18px] w-[18px]" strokeWidth={2} />
-                    <select
-                      id="reg-rol"
-                      name="rol"
-                      value={regRol}
-                      onChange={(e) => setRegRol(e.target.value as UserRole)}
-                      className="auth-input"
-                    >
-                      {USER_ROLES.map((roleOption) => (
-                        <option key={roleOption} value={roleOption}>
-                          {roleOption}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <select
+                    id="reg-rol"
+                    name="rol"
+                    value={regRol}
+                    onChange={(e) => setRegRol(e.target.value as UserRole)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-sm text-slate-900 transition-all duration-200 focus:border-[#00753A] focus:outline-none focus:ring-4 focus:ring-[#00753A]/10"
+                  >
+                    {USER_ROLES.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={regSubmitting || !isConfigured}
-                  className="auth-cta mt-1 w-full"
+                <div
+                  className="auth-stagger-rise"
+                  style={{ animationDelay: '215ms' }}
                 >
-                  {regSubmitting ? 'Registrando cuenta...' : 'Crear Cuenta'}
-                </button>
-
-                <p className="pt-1 text-center text-sm text-[#45564C]">
-                  ¿Ya tienes cuenta?{' '}
                   <button
-                    type="button"
-                    onClick={() => switchMode('login')}
-                    className="font-bold text-[#00753A] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[#E6A608]"
+                    type="submit"
+                    disabled={regSubmitting || !isConfigured}
+                    className="group relative mt-7 flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg bg-gradient-to-r from-[#F7C224] via-[#EEAD0E] to-[#E29C06] py-3.5 text-sm font-semibold text-slate-950 shadow-[0_8px_20px_-4px_rgba(230,166,8,0.42),inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:brightness-[1.03] hover:shadow-[0_12px_24px_-4px_rgba(230,166,8,0.52),inset_0_1px_0_rgba(255,255,255,0.6)] active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Iniciar sesión
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/35 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-full"
+                    />
+                    <span className="relative z-10">
+                      {regSubmitting ? 'Registrando cuenta...' : 'Crear Cuenta'}
+                    </span>
+                    {regSubmitting && (
+                      <Loader2 className="relative z-10 h-4 w-4 shrink-0 animate-spin" />
+                    )}
                   </button>
-                </p>
+                </div>
               </form>
-            )}
-          </section>
 
-          {/* Panel derecho: Ilustración aeropónica animada fiel a la referencia */}
-          <aside className="relative hidden flex-1 overflow-hidden bg-[#DDF5E6] px-12 py-10 lg:block">
-            <div className="inline-flex items-center gap-2.5 rounded-full bg-white px-3.5 py-2 text-[13px] font-bold text-[#0D3B24]">
-              <span
-                className={`h-[9px] w-[9px] rounded-full ${
-                  isConfigured ? 'aqua-dot-pulse bg-[#34D399]' : 'bg-[#E6A608]'
-                }`}
-              />
-              {isConfigured ? 'Firebase Cloud Conectado' : 'Entorno Pendiente'}
+              <p
+                className="auth-stagger-rise mt-7 text-center text-sm text-slate-600"
+                style={{ animationDelay: '215ms' }}
+              >
+                ¿Ya tienes una cuenta?{' '}
+                <button
+                  type="button"
+                  onClick={() => switchView('login')}
+                  className="font-semibold text-[#00753A] hover:underline"
+                >
+                  Iniciar sesión
+                </button>
+              </p>
             </div>
+          )}
 
-            <h2 className="mt-5 max-w-[440px] text-[34px] font-extrabold leading-[1.15] text-[#0D3B24]">
-              Monitorea tus cultivos aeropónicos
-            </h2>
-
-            <p className="mt-3 flex max-w-[400px] items-start gap-2 text-sm leading-relaxed text-[#0D3B24]">
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#0D3B24]" strokeWidth={2} />
-              <span>
-                Telemetría en tiempo real, protegida con cifrado AES-GCM y verificación de
-                integridad SHA-256.
-              </span>
-            </p>
-
-            <svg
-              className="pointer-events-none absolute bottom-0 left-0 h-[440px] w-full"
-              viewBox="0 0 620 470"
-              preserveAspectRatio="xMidYMax slice"
-              role="img"
-              aria-label="Lechugas, albahaca y brotes creciendo sobre colinas verdes"
+          {localAuditLogs.length > 0 && (
+            <section
+              aria-label="Eventos de auditoría locales"
+              className="mt-6 rounded-lg border border-slate-200 bg-slate-50/95 px-3.5 py-2.5 text-xs text-slate-700"
             >
-              <defs>
-                <g id="aq-lf">
-                  <path d="M0 0C16-30 16-70 0-100-16-70-16-30 0 0Z" />
-                  <path
-                    d="M0-6V-84"
-                    stroke="#fff"
-                    strokeOpacity=".4"
-                    strokeWidth="2"
-                    fill="none"
-                  />
-                </g>
-                <g id="aq-bl">
-                  <path d="M0 0C34-14 46-52 0-84-46-52-34-14 0 0Z" />
-                  <path
-                    d="M0-4V-70"
-                    stroke="#fff"
-                    strokeOpacity=".35"
-                    strokeWidth="2"
-                    fill="none"
-                  />
-                </g>
-                <g id="aq-ll">
-                  <path d="M0 0C-40-20-62-70-44-112-36-128-24-122-18-134-10-148 8-148 14-134 22-122 36-128 44-112 62-70 40-20 0 0Z" />
-                  <path
-                    d="M0-6V-110"
-                    stroke="#fff"
-                    strokeOpacity=".4"
-                    strokeWidth="2"
-                    fill="none"
-                  />
-                </g>
-                <path id="aq-dr" d="M0-14C7-4 10 2 10 6A10 10 0 0 1-10 6C-10 2-7-4 0-14Z" />
-              </defs>
-
-              <path
-                className="aqua-arc"
-                d="M60 330Q110 250 220 232"
-                stroke="#5CC863"
-                strokeWidth="2"
-                fill="none"
-                strokeLinecap="round"
-                strokeDasharray="4 8"
-                opacity=".8"
-              />
-              <path
-                className="aqua-arc"
-                d="M330 270Q380 190 470 175"
-                stroke="#5CC863"
-                strokeWidth="2"
-                fill="none"
-                strokeLinecap="round"
-                strokeDasharray="4 8"
-                opacity=".8"
-              />
-              <path
-                className="aqua-arc"
-                d="M575 290Q585 230 600 200"
-                stroke="#5CC863"
-                strokeWidth="2"
-                fill="none"
-                strokeLinecap="round"
-                strokeDasharray="4 8"
-                opacity=".8"
-              />
-
-              <g className="aqua-drop" style={{ animationDelay: '0s' }}>
-                <use href="#aq-dr" transform="translate(210 70)" fill="#5CC863" />
-              </g>
-              <g className="aqua-drop" style={{ animationDelay: '1.1s' }}>
-                <use href="#aq-dr" transform="translate(430 30)" fill="#7ED68C" />
-              </g>
-              <g className="aqua-drop" style={{ animationDelay: '2.2s' }}>
-                <use href="#aq-dr" transform="translate(570 140)" fill="#5CC863" />
-              </g>
-              <g className="aqua-drop" style={{ animationDelay: '0.6s' }}>
-                <use href="#aq-dr" transform="translate(90 230)" fill="#7ED68C" />
-              </g>
-              <g className="aqua-drop" style={{ animationDelay: '1.7s' }}>
-                <use href="#aq-dr" transform="translate(330 150)" fill="#5CC863" />
-              </g>
-
-              <path
-                d="M0 395C120 345 240 355 340 392S520 405 620 355V470H0Z"
-                fill="#9BE0B0"
-              />
-
-              <g className="aqua-grow" style={{ animationDelay: '0s' }}>
-                <g className="aqua-sway" style={{ animationDuration: '6s' }}>
-                  <path
-                    d="M520 442C514 380 528 320 520 250"
-                    stroke="#3E9E4A"
-                    strokeWidth="6"
-                    strokeLinecap="round"
-                    fill="none"
-                  />
-                  <use
-                    href="#aq-bl"
-                    transform="translate(520 350) rotate(-62) scale(1.05)"
-                    fill="#2E9E3E"
-                  />
-                  <use
-                    href="#aq-bl"
-                    transform="translate(520 350) rotate(58) scale(1.05)"
-                    fill="#3FB04E"
-                  />
-                  <use
-                    href="#aq-bl"
-                    transform="translate(520 300) rotate(-52) scale(0.9)"
-                    fill="#4CBB57"
-                  />
-                  <use
-                    href="#aq-bl"
-                    transform="translate(520 300) rotate(50) scale(0.85)"
-                    fill="#2E9E3E"
-                  />
-                  <use
-                    href="#aq-bl"
-                    transform="translate(520 262) rotate(-30) scale(0.7)"
-                    fill="#3FB04E"
-                  />
-                  <use
-                    href="#aq-bl"
-                    transform="translate(520 262) rotate(32) scale(0.7)"
-                    fill="#4CBB57"
-                  />
-                  <use
-                    href="#aq-bl"
-                    transform="translate(520 250) rotate(0) scale(0.8)"
-                    fill="#5CC863"
-                  />
-                </g>
-              </g>
-
-              <g className="aqua-grow" style={{ animationDelay: '0.12s' }}>
-                <g className="aqua-sway" style={{ animationDelay: '1.9s' }}>
-                  <use
-                    href="#aq-ll"
-                    transform="translate(390 440) rotate(-62) scale(1.19)"
-                    fill="#6FC83A"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(390 440) rotate(62) scale(1.19)"
-                    fill="#86D544"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(390 440) rotate(-36) scale(1.38)"
-                    fill="#9CE04C"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(390 440) rotate(36) scale(1.38)"
-                    fill="#B4EA5E"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(390 440) rotate(0) scale(1.5)"
-                    fill="#C8F274"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(390 440) rotate(-14) scale(1.0)"
-                    fill="#C8F274"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(390 440) rotate(16) scale(0.88)"
-                    fill="#D4F78A"
-                  />
-                </g>
-              </g>
-
-              <g className="aqua-grow" style={{ animationDelay: '0.24s' }}>
-                <g className="aqua-sway" style={{ animationDelay: '2.3s' }}>
-                  <use
-                    href="#aq-ll"
-                    transform="translate(235 445) rotate(-62) scale(0.66)"
-                    fill="#6FC83A"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(235 445) rotate(62) scale(0.66)"
-                    fill="#86D544"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(235 445) rotate(-36) scale(0.77)"
-                    fill="#9CE04C"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(235 445) rotate(36) scale(0.77)"
-                    fill="#B4EA5E"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(235 445) rotate(0) scale(0.84)"
-                    fill="#C8F274"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(235 445) rotate(-14) scale(0.56)"
-                    fill="#C8F274"
-                  />
-                  <use
-                    href="#aq-ll"
-                    transform="translate(235 445) rotate(16) scale(0.49)"
-                    fill="#D4F78A"
-                  />
-                </g>
-              </g>
-
-              <g className="aqua-grow" style={{ animationDelay: '0.32s' }}>
-                <g
-                  className="aqua-sway"
-                  style={{ animationDelay: '2.7s', animationDuration: '4s' }}
-                >
-                  <path
-                    d="M95 448V388"
-                    stroke="#3E9E4A"
-                    strokeWidth="4"
-                    strokeLinecap="round"
-                    fill="none"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(95 388) rotate(-48) scale(0.5)"
-                    fill="#4CBB57"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(95 388) rotate(46) scale(0.425)"
-                    fill="#6FD06A"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(95 388) rotate(0) scale(0.3)"
-                    fill="#8BE07C"
-                  />
-                  <path
-                    d="M150 448V363"
-                    stroke="#3E9E4A"
-                    strokeWidth="4"
-                    strokeLinecap="round"
-                    fill="none"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(150 363) rotate(-48) scale(0.6)"
-                    fill="#4CBB57"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(150 363) rotate(46) scale(0.51)"
-                    fill="#6FD06A"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(150 363) rotate(0) scale(0.36)"
-                    fill="#8BE07C"
-                  />
-                </g>
-              </g>
-
-              <g className="aqua-grow" style={{ animationDelay: '0.4s' }}>
-                <g
-                  className="aqua-sway"
-                  style={{ animationDelay: '2.1s', animationDuration: '4.5s' }}
-                >
-                  <path
-                    d="M310 452V357"
-                    stroke="#3E9E4A"
-                    strokeWidth="4"
-                    strokeLinecap="round"
-                    fill="none"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(310 357) rotate(-48) scale(0.62)"
-                    fill="#4CBB57"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(310 357) rotate(46) scale(0.527)"
-                    fill="#6FD06A"
-                  />
-                  <use
-                    href="#aq-lf"
-                    transform="translate(310 357) rotate(0) scale(0.372)"
-                    fill="#8BE07C"
-                  />
-                </g>
-              </g>
-
-              <path
-                d="M0 432C140 392 280 408 380 430S560 446 620 414V470H0Z"
-                fill="#52BE78"
-              />
-              <path
-                d="M0 458C180 430 400 446 620 442V470H0Z"
-                fill="#2F9D66"
-              />
-            </svg>
-          </aside>
+              <p className="font-semibold text-slate-900">
+                Intentos fallidos recientes ({localAuditLogs.length})
+              </p>
+              <ul className="mt-1 space-y-1">
+                {localAuditLogs.slice(0, 3).map((entry) => (
+                  <li
+                    key={entry.id ?? `${entry.timestamp}-${entry.hash_evento}`}
+                    className="truncate text-[11px] text-slate-500"
+                  >
+                    {entry.accion} · {entry.email}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
-
-        {/* Tabla diagnóstica local de intentos fallidos (LOGIN_FALLIDO) */}
-        {localAuditLogs.length > 0 && (
-          <section
-            aria-label="Eventos de auditoría locales"
-            className="rounded-2xl border border-[#F2F0EC]/25 bg-[#0D3B24]/85 p-5 text-[#F2F0EC] shadow-lg"
-          >
-            <h2 className="text-sm font-bold text-[#F2F0EC]">
-              Registro Local de Intentos Fallidos (Sesión Actual)
-            </h2>
-            <p className="mt-1 text-xs text-[#F2F0EC]/80">
-              Por regla estricta de producción en Firestore (
-              <code className="font-mono">request.auth != null</code>), los eventos sin sesión
-              autenticada se registran de forma controlada localmente.
-            </p>
-            <div className="mt-3 overflow-x-auto rounded-xl bg-[#FAF6EE] text-[#14261C]">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b border-[#C5D0C8] bg-[#EDE7D9] font-semibold text-[#14261C]">
-                    <th className="px-3 py-2">Timestamp (ISO 8601)</th>
-                    <th className="px-3 py-2">Acción</th>
-                    <th className="px-3 py-2">Email</th>
-                    <th className="px-3 py-2">Detalle</th>
-                    <th className="px-3 py-2">Hash Evento (SHA-256)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#EDE7D9]">
-                  {localAuditLogs.map((entry) => (
-                    <tr key={entry.id ?? `${entry.timestamp}-${entry.hash_evento}`}>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono tabular-nums">
-                        {entry.timestamp}
-                      </td>
-                      <td className="px-3 py-2 font-semibold text-red-700">{entry.accion}</td>
-                      <td className="px-3 py-2">{entry.email}</td>
-                      <td className="px-3 py-2">{entry.detalle}</td>
-                      <td className="px-3 py-2 font-mono text-[11px]">{entry.hash_evento}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-      </div>
+      </section>
     </main>
   );
 }
