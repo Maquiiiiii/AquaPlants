@@ -438,7 +438,7 @@ export async function ejecutarPruebaEstres(
 // ============================================================================
 
 export function subscribeMediciones(
-  maxRecords: number,
+  maxRecords: number | null,
   onData: (items: Medicion[]) => void,
   onError: (message: string) => void,
 ): Unsubscribe {
@@ -447,11 +447,10 @@ export function subscribeMediciones(
     return () => {};
   }
 
-  const q = query(
-    collection(db, 'mediciones'),
-    orderBy('timestamp', 'desc'),
-    limit(maxRecords),
-  );
+  const q =
+    maxRecords !== null && maxRecords > 0
+      ? query(collection(db, 'mediciones'), orderBy('timestamp', 'desc'), limit(maxRecords))
+      : query(collection(db, 'mediciones'), orderBy('timestamp', 'desc'));
 
   return onSnapshot(
     q,
@@ -488,7 +487,7 @@ export function subscribeMediciones(
 }
 
 export function subscribeAlertas(
-  maxRecords: number,
+  maxRecords: number | null,
   onData: (items: Alerta[]) => void,
   onError: (message: string) => void,
 ): Unsubscribe {
@@ -497,11 +496,10 @@ export function subscribeAlertas(
     return () => {};
   }
 
-  const q = query(
-    collection(db, 'alertas'),
-    orderBy('timestamp', 'desc'),
-    limit(maxRecords),
-  );
+  const q =
+    maxRecords !== null && maxRecords > 0
+      ? query(collection(db, 'alertas'), orderBy('timestamp', 'desc'), limit(maxRecords))
+      : query(collection(db, 'alertas'), orderBy('timestamp', 'desc'));
 
   return onSnapshot(
     q,

@@ -118,10 +118,11 @@ export async function logAuditEvent(
 }
 
 /**
- * Suscripción en tiempo real a los últimos N registros de `audit_logs`.
+ * Suscripción en tiempo real a los registros de `audit_logs`.
+ * Si `maxRecords` es null o <= 0, obtiene todos los registros ordenados por timestamp desc.
  */
 export function subscribeAuditLogs(
-  maxRecords: number,
+  maxRecords: number | null,
   onData: (logs: AuditLogEntry[]) => void,
   onError: (errorMessage: string) => void,
 ): Unsubscribe {
@@ -130,11 +131,10 @@ export function subscribeAuditLogs(
     return () => {};
   }
 
-  const auditQuery = query(
-    collection(db, AUDIT_COLLECTION),
-    orderBy('timestamp', 'desc'),
-    limit(maxRecords),
-  );
+  const auditQuery =
+    maxRecords !== null && maxRecords > 0
+      ? query(collection(db, AUDIT_COLLECTION), orderBy('timestamp', 'desc'), limit(maxRecords))
+      : query(collection(db, AUDIT_COLLECTION), orderBy('timestamp', 'desc'));
 
   return onSnapshot(
     auditQuery,

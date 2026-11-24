@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import CrudManager from './components/CrudManager';
+import DashboardMonitor from './components/DashboardMonitor';
 import IotSimulator from './components/IotSimulator';
+import ManagementReport from './components/ManagementReport';
 import { useAuth } from './context/AuthContext';
 import {
   subscribeAuditLogs,
@@ -379,6 +381,8 @@ export default function App() {
           {profile?.rol ?? (profileLoading ? 'Cargando perfil...' : 'Sin perfil en Firestore')}
         </p>
         <nav aria-label="Navegación de sesión">
+          <a href="#dashboard-monitoreo">Dashboard y Verificación</a> |{' '}
+          <a href="#informe-gestion">Informe de Gestión</a> |{' '}
           <a href="#gestion-crud">Gestión CRUD</a> |{' '}
           <a href="#simulador-iot">Simulador IoT</a> |{' '}
           <a href="#autotest-criptografico">Auto-test Criptográfico</a> |{' '}
@@ -395,6 +399,18 @@ export default function App() {
           {uiMessage && <p>{uiMessage}</p>}
         </section>
       )}
+
+      <DashboardMonitor
+        profile={profile}
+        userUid={user.uid}
+        userEmail={user.email ?? 'desconocido'}
+      />
+
+      <ManagementReport
+        profile={profile}
+        userUid={user.uid}
+        userEmail={user.email ?? 'desconocido'}
+      />
 
       <CrudManager
         profile={profile}
